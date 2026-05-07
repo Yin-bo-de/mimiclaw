@@ -76,6 +76,17 @@ esp_err_t tool_script_create_execute(const char *input_json, char *output, size_
         return ESP_ERR_INVALID_ARG;
     }
 
+    /* Script name: only alphanumeric and underscore */
+    for (const char *p = name; *p; p++) {
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+              (*p >= '0' && *p <= '9') || *p == '_')) {
+            snprintf(output, output_size,
+                     "Error: script name must contain only letters, digits, and underscores");
+            cJSON_Delete(root);
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+
     /* Validate each step */
     int step_count = cJSON_GetArraySize(steps_obj);
     if (step_count > SCRIPT_MAX_STEPS) {
