@@ -63,8 +63,6 @@
 
 /* Telegram Bot */
 #define MIMI_TELEGRAM_CONFIG_SECTION 0   /* 0 = disable Telegram */
-
-#if MIMI_TELEGRAM_CONFIG_SECTION
 #define MIMI_TG_POLL_TIMEOUT_S       30
 #define MIMI_TG_MAX_MSG_LEN          4096
 #define MIMI_TG_POLL_STACK           (12 * 1024)
@@ -72,7 +70,6 @@
 #define MIMI_TG_POLL_CORE            0
 #define MIMI_TG_CARD_SHOW_MS         3000
 #define MIMI_TG_CARD_BODY_SCALE      3
-#endif /* MIMI_TELEGRAM_CONFIG_SECTION */
 
 /* Feishu Bot */
 #define MIMI_FEISHU_MAX_MSG_LEN          4096
