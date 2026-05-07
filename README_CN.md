@@ -271,6 +271,11 @@ MimiClaw 同时支持 Anthropic 和 OpenAI 的工具调用 — LLM 在对话中�
 |------|------|
 | `web_search` | 通过 Tavily（优先）或 Brave 搜索网页，获取实时信息 |
 | `get_current_time` | 通过 HTTP 获取当前日期和时间，并设置系统时钟 |
+| `gpio_write` | 设置 GPIO 引脚为 HIGH 或 LOW，控制 LED、继电器等数字输出 |
+| `gpio_read` | 读取单个 GPIO 引脚状态（HIGH/LOW），检测开关、传感器等 |
+| `gpio_read_all` | 一次性读取所有允许的 GPIO 引脚状态 |
+| `servo_set` | 在 GPIO 引脚上设置舵机角度（0-180°），生成 50Hz PWM 信号 |
+| `servo_release` | 停止 PWM 输出并释放舵机，舵机将不再保持力矩 |
 | `cron_add` | 创建定时或一次性任务（LLM 自主创建 cron 任务） |
 | `cron_list` | 列出所有已调度的 cron 任务 |
 | `cron_remove` | 按 ID 删除 cron 任务 |
@@ -288,6 +293,18 @@ MimiClaw 内置 cron 调度器，让 AI 可以自主安排任务。LLM 可以通
 心跳服务会定期读取 SPIFFS 上的 `HEARTBEAT.md`，检查是否有待办事项。如果发现未完成的条目（非空行、非标题、非已勾选的 `- [x]`），就会向 Agent 循环发送提示，让 AI 自主处理。
 
 这让 MimiClaw 变成一个主动型助理 — 把任务写入 `HEARTBEAT.md`，机器人会在下一次心跳周期自动拾取执行（默认每 30 分钟）。
+
+## 模块开关
+
+部分模块可通过 `mimi_config.h` 中的宏在编译时启用/禁用：
+
+| 宏 | 默认值 | 说明 |
+|------|------|------|
+| `MIMI_GPIO_CONFIG_SECTION` | `1` | 启用 GPIO 工具（gpio_write / gpio_read / gpio_read_all） |
+| `MIMI_PWM_CONFIG_SECTION` | `1` | 启用舵机/PWM 工具（servo_set / servo_release） |
+| `MIMI_TELEGRAM_CONFIG_SECTION` | `0` | 启用 Telegram 通道（设为 `1` 开启） |
+
+修改后需重新编译：`idf.py fullclean && idf.py build`
 
 ## 其他功能
 

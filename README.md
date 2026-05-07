@@ -256,6 +256,11 @@ MimiClaw supports tool calling for both Anthropic and OpenAI — the LLM can cal
 |------|-------------|
 | `web_search` | Search the web via Tavily (preferred) or Brave for current information |
 | `get_current_time` | Fetch current date/time via HTTP and set the system clock |
+| `gpio_write` | Set a GPIO pin HIGH or LOW — control LEDs, relays, and digital outputs |
+| `gpio_read` | Read a GPIO pin state (HIGH/LOW) — check switches, sensors, and digital inputs |
+| `gpio_read_all` | Read all allowed GPIO pin states at once |
+| `servo_set` | Set a servo motor angle (0-180°) on a GPIO pin, generating 50Hz PWM signal |
+| `servo_release` | Stop PWM output and release a servo — it will no longer hold position |
 | `cron_add` | Schedule a recurring or one-shot task (the LLM creates cron jobs on its own) |
 | `cron_list` | List all scheduled cron jobs |
 | `cron_remove` | Remove a cron job by ID |
@@ -273,6 +278,18 @@ Jobs are persisted to SPIFFS (`cron.json`) and survive reboots. Example use case
 The heartbeat service periodically reads `HEARTBEAT.md` from SPIFFS and checks for actionable tasks. If uncompleted items are found (anything that isn't an empty line, a header, or a checked `- [x]` box), it sends a prompt to the agent loop so the AI can act on them autonomously.
 
 This turns MimiClaw into a proactive assistant — write tasks to `HEARTBEAT.md` and the bot will pick them up on the next heartbeat cycle (default: every 30 minutes).
+
+## Module Toggles
+
+Some modules can be enabled/disabled at compile time via macros in `mimi_config.h`:
+
+| Macro | Default | Description |
+|-------|---------|-------------|
+| `MIMI_GPIO_CONFIG_SECTION` | `1` | Enable GPIO tools (gpio_write / gpio_read / gpio_read_all) |
+| `MIMI_PWM_CONFIG_SECTION` | `1` | Enable servo/PWM tools (servo_set / servo_release) |
+| `MIMI_TELEGRAM_CONFIG_SECTION` | `0` | Enable Telegram channel (set to `1` to enable) |
+
+After changing, rebuild: `idf.py fullclean && idf.py build`
 
 ## Also Included
 

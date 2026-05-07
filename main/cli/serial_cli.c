@@ -1,7 +1,9 @@
 #include "serial_cli.h"
 #include "mimi_config.h"
 #include "wifi/wifi_manager.h"
+#if MIMI_TELEGRAM_CONFIG_SECTION
 #include "channels/telegram/telegram_bot.h"
+#endif
 #include "channels/feishu/feishu_bot.h"
 #include "llm/llm_proxy.h"
 #include "memory/memory_store.h"
@@ -59,6 +61,7 @@ static int cmd_wifi_status(int argc, char **argv)
 }
 
 /* --- set_tg_token command --- */
+#if MIMI_TELEGRAM_CONFIG_SECTION
 static struct {
     struct arg_str *token;
     struct arg_end *end;
@@ -75,6 +78,7 @@ static int cmd_set_tg_token(int argc, char **argv)
     printf("Telegram bot token saved.\n");
     return 0;
 }
+#endif
 
 /* --- set_feishu_creds command --- */
 static struct {
@@ -613,7 +617,9 @@ static int cmd_config_show(int argc, char **argv)
     printf("=== Current Configuration ===\n");
     print_config("WiFi SSID",  MIMI_NVS_WIFI,   MIMI_NVS_KEY_SSID,     MIMI_SECRET_WIFI_SSID,  false);
     print_config("WiFi Pass",  MIMI_NVS_WIFI,   MIMI_NVS_KEY_PASS,     MIMI_SECRET_WIFI_PASS,  true);
+#if MIMI_TELEGRAM_CONFIG_SECTION
     print_config("TG Token",   MIMI_NVS_TG,     MIMI_NVS_KEY_TG_TOKEN, MIMI_SECRET_TG_TOKEN,   true);
+#endif
     print_config("API Key",    MIMI_NVS_LLM,    MIMI_NVS_KEY_API_KEY,  MIMI_SECRET_API_KEY,    true);
     print_config("Model",      MIMI_NVS_LLM,    MIMI_NVS_KEY_MODEL,    MIMI_SECRET_MODEL,      false);
     print_config("Provider",   MIMI_NVS_LLM,    MIMI_NVS_KEY_PROVIDER, MIMI_SECRET_MODEL_PROVIDER, false);
@@ -887,6 +893,7 @@ esp_err_t serial_cli_init(void)
     esp_console_cmd_register(&wifi_scan_cmd);
 
     /* set_tg_token */
+#if MIMI_TELEGRAM_CONFIG_SECTION
     tg_token_args.token = arg_str1(NULL, NULL, "<token>", "Telegram bot token");
     tg_token_args.end = arg_end(1);
     esp_console_cmd_t tg_token_cmd = {
@@ -896,6 +903,7 @@ esp_err_t serial_cli_init(void)
         .argtable = &tg_token_args,
     };
     esp_console_cmd_register(&tg_token_cmd);
+#endif
 
     /* set_feishu_creds */
     feishu_creds_args.app_id = arg_str1(NULL, NULL, "<app_id>", "Feishu App ID");

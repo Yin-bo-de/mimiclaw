@@ -256,6 +256,11 @@ MimiClawはAnthropicとOpenAI両方のツール呼び出しをサポート — L
 |--------|------|
 | `web_search` | Tavily（優先）またはBraveでウェブ検索し、最新情報を取得 |
 | `get_current_time` | HTTP経由で現在の日時を取得し、システムクロックを設定 |
+| `gpio_write` | GPIOピンをHIGH/LOWに設定 — LED、リレー、デジタル出力の制御 |
+| `gpio_read` | GPIOピンの状態（HIGH/LOW）を読み取り — スイッチ、センサーの確認 |
+| `gpio_read_all` | 許可された全GPIOピンの状態を一括読み取り |
+| `servo_set` | GPIOピンでサーボモータの角度（0-180°）を設定、50Hz PWM信号を生成 |
+| `servo_release` | PWM出力を停止しサーボを解放 — サーボは位置を保持しなくなります |
 | `cron_add` | 定期または単発タスクをスケジュール（LLMが自律的にcronジョブを作成） |
 | `cron_list` | スケジュール済みのcronジョブを一覧表示 |
 | `cron_remove` | IDでcronジョブを削除 |
@@ -273,6 +278,18 @@ MimiClawにはcronスケジューラが内蔵されており、AIが自律的に
 ハートビートサービスはSPIFFS上の`HEARTBEAT.md`を定期的に読み取り、アクション可能なタスクがあるかチェックします。未完了の項目（空行、見出し、チェック済み`- [x]`以外）が見つかると、エージェントループにプロンプトを送信し、AIが自律的に処理します。
 
 これによりMimiClawはプロアクティブなアシスタントになります — `HEARTBEAT.md`にタスクを書き込めば、次のハートビートサイクルで自動的に拾い上げて実行します（デフォルト：30分ごと）。
+
+## モジュールトグル
+
+一部のモジュールは`mimi_config.h`のマクロでコンパイル時に有効/無効を切り替えられます：
+
+| マクロ | デフォルト | 説明 |
+|--------|------------|------|
+| `MIMI_GPIO_CONFIG_SECTION` | `1` | GPIOツールを有効化（gpio_write / gpio_read / gpio_read_all） |
+| `MIMI_PWM_CONFIG_SECTION` | `1` | サーボ/PWMツールを有効化（servo_set / servo_release） |
+| `MIMI_TELEGRAM_CONFIG_SECTION` | `0` | Telegramチャンネルを有効化（`1`に設定で有効） |
+
+変更後は再ビルドが必要です：`idf.py fullclean && idf.py build`
 
 ## その他の機能
 
