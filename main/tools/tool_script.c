@@ -9,7 +9,6 @@
 
 #include <string.h>
 #include <stdio.h>
-#include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
 
@@ -20,20 +19,6 @@ static const char *TAG = "tool_script";
 #define SCRIPT_MAX_NAME    32
 #define SCRIPT_OUTPUT_BUF  512
 
-static esp_err_t ensure_script_dir(void)
-{
-    struct stat st;
-    if (stat(SCRIPT_DIR, &st) == 0 && S_ISDIR(st.st_mode)) {
-        return ESP_OK;
-    }
-    if (mkdir(SCRIPT_DIR, 0775) != 0) {
-        ESP_LOGE(TAG, "Failed to create script dir: %s", SCRIPT_DIR);
-        return ESP_FAIL;
-    }
-    ESP_LOGI(TAG, "Created script dir: %s", SCRIPT_DIR);
-    return ESP_OK;
-}
-
 static void script_path(const char *name, char *buf, size_t buf_size)
 {
     snprintf(buf, buf_size, "%s/%s.json", SCRIPT_DIR, name);
@@ -41,8 +26,6 @@ static void script_path(const char *name, char *buf, size_t buf_size)
 
 esp_err_t tool_script_init(void)
 {
-    esp_err_t err = ensure_script_dir();
-    if (err != ESP_OK) return err;
     ESP_LOGI(TAG, "Script engine initialized (dir: %s)", SCRIPT_DIR);
     return ESP_OK;
 }
