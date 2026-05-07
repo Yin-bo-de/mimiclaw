@@ -276,6 +276,10 @@ MimiClaw 同时支持 Anthropic 和 OpenAI 的工具调用 — LLM 在对话中�
 | `gpio_read_all` | 一次性读取所有允许的 GPIO 引脚状态 |
 | `servo_set` | 在 GPIO 引脚上设置舵机角度（0-180°），生成 50Hz PWM 信号 |
 | `servo_release` | 停止 PWM 输出并释放舵机，舵机将不再保持力矩 |
+| `script_create` | 创建命名脚本（有序工具调用序列），自动化重复操作，无需 LLM 参与 |
+| `script_run` | 按名称执行脚本，直接调用工具，零 token 消耗 |
+| `script_list` | 列出所有已存脚本及步骤数 |
+| `script_remove` | 按名称删除脚本 |
 | `cron_add` | 创建定时或一次性任务（LLM 自主创建 cron 任务） |
 | `cron_list` | 列出所有已调度的 cron 任务 |
 | `cron_remove` | 按 ID 删除 cron 任务 |
@@ -302,6 +306,7 @@ MimiClaw 内置 cron 调度器，让 AI 可以自主安排任务。LLM 可以通
 |------|------|------|
 | `MIMI_GPIO_CONFIG_SECTION` | `1` | 启用 GPIO 工具（gpio_write / gpio_read / gpio_read_all） |
 | `MIMI_PWM_CONFIG_SECTION` | `1` | 启用舵机/PWM 工具（servo_set / servo_release） |
+| `MIMI_SCRIPT_CONFIG_SECTION` | `1` | 启用脚本工具（script_create / script_run / script_list / script_remove） |
 | `MIMI_TELEGRAM_CONFIG_SECTION` | `0` | 启用 Telegram 通道（设为 `1` 开启） |
 
 修改后需重新编译：`idf.py fullclean && idf.py build`

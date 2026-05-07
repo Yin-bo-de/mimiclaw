@@ -22,6 +22,7 @@ idf_component_register(
         "tools/tool_files.c"
         "tools/tool_gpio.c"
         "tools/tool_pwm.c"
+        "tools/tool_script.c"
         "tools/gpio_policy.c"
         "skills/skill_loader.c"
         "onboard/wifi_onboard.c"

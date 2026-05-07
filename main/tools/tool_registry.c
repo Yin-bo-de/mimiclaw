@@ -6,6 +6,7 @@
 #include "tools/tool_cron.h"
 #include "tools/tool_gpio.h"
 #include "tools/tool_pwm.h"
+#include "tools/tool_script.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -240,6 +241,59 @@ esp_err_t tool_registry_init(void)
         .execute = tool_servo_release_execute,
     };
     register_tool(&sr);
+
+    /* Register Script tools */
+    tool_script_init();
+
+    mimi_tool_t sc = {
+        .name = "script_create",
+        .description = "Create a named script with an ordered list of tool calls. Scripts run without LLM, saving tokens on repeated actions.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"name\":{\"type\":\"string\",\"description\":\"Script name (letters, digits, underscore)\"},"
+            "\"steps\":{\"type\":\"array\",\"description\":\"Ordered list of tool calls\",\"items\":{\"type\":\"object\","
+            "\"properties\":{\"tool\":{\"type\":\"string\",\"description\":\"Tool name to call\"},"
+            "\"input\":{\"type\":\"object\",\"description\":\"Tool input as JSON object\"},"
+            "\"delay_ms\":{\"type\":\"integer\",\"description\":\"Optional delay in ms after this step\"}},"
+            "\"required\":[\"tool\",\"input\"]}}},"
+            "\"required\":[\"name\",\"steps\"]}",
+        .execute = tool_script_create_execute,
+    };
+    register_tool(&sc);
+
+    mimi_tool_t sr2 = {
+        .name = "script_run",
+        .description = "Execute a stored script by name. Runs all steps sequentially without LLM involvement.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"name\":{\"type\":\"string\",\"description\":\"Script name to run\"}},"
+            "\"required\":[\"name\"]}",
+        .execute = tool_script_run_execute,
+    };
+    register_tool(&sr2);
+
+    mimi_tool_t sl = {
+        .name = "script_list",
+        .description = "List all stored scripts with their step counts.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_script_list_execute,
+    };
+    register_tool(&sl);
+
+    mimi_tool_t sm = {
+        .name = "script_remove",
+        .description = "Delete a stored script by name.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"name\":{\"type\":\"string\",\"description\":\"Script name to delete\"}},"
+            "\"required\":[\"name\"]}",
+        .execute = tool_script_remove_execute,
+    };
+    register_tool(&sm);
 
     build_tools_json();
 

@@ -261,6 +261,10 @@ MimiClawはAnthropicとOpenAI両方のツール呼び出しをサポート — L
 | `gpio_read_all` | 許可された全GPIOピンの状態を一括読み取り |
 | `servo_set` | GPIOピンでサーボモータの角度（0-180°）を設定、50Hz PWM信号を生成 |
 | `servo_release` | PWM出力を停止しサーボを解放 — サーボは位置を保持しなくなります |
+| `script_create` | 名前付きスクリプト（ツール呼び出しの順序付きリスト）を作成し、LLMなしで反復操作を自動化 |
+| `script_run` | 名前でスクリプトを実行 — 全ステップを直接実行、トークン消費ゼロ |
+| `script_list` | 保存済みスクリプトとステップ数を一覧表示 |
+| `script_remove` | 名前でスクリプトを削除 |
 | `cron_add` | 定期または単発タスクをスケジュール（LLMが自律的にcronジョブを作成） |
 | `cron_list` | スケジュール済みのcronジョブを一覧表示 |
 | `cron_remove` | IDでcronジョブを削除 |
@@ -287,6 +291,7 @@ MimiClawにはcronスケジューラが内蔵されており、AIが自律的に
 |--------|------------|------|
 | `MIMI_GPIO_CONFIG_SECTION` | `1` | GPIOツールを有効化（gpio_write / gpio_read / gpio_read_all） |
 | `MIMI_PWM_CONFIG_SECTION` | `1` | サーボ/PWMツールを有効化（servo_set / servo_release） |
+| `MIMI_SCRIPT_CONFIG_SECTION` | `1` | スクリプトツールを有効化（script_create / script_run / script_list / script_remove） |
 | `MIMI_TELEGRAM_CONFIG_SECTION` | `0` | Telegramチャンネルを有効化（`1`に設定で有効） |
 
 変更後は再ビルドが必要です：`idf.py fullclean && idf.py build`

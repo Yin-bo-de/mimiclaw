@@ -261,6 +261,10 @@ MimiClaw supports tool calling for both Anthropic and OpenAI — the LLM can cal
 | `gpio_read_all` | Read all allowed GPIO pin states at once |
 | `servo_set` | Set a servo motor angle (0-180°) on a GPIO pin, generating 50Hz PWM signal |
 | `servo_release` | Stop PWM output and release a servo — it will no longer hold position |
+| `script_create` | Create a named script (ordered tool calls) to automate repeated actions without LLM |
+| `script_run` | Execute a stored script by name — runs all steps directly, zero token cost |
+| `script_list` | List all stored scripts with step counts |
+| `script_remove` | Delete a stored script by name |
 | `cron_add` | Schedule a recurring or one-shot task (the LLM creates cron jobs on its own) |
 | `cron_list` | List all scheduled cron jobs |
 | `cron_remove` | Remove a cron job by ID |
@@ -287,6 +291,7 @@ Some modules can be enabled/disabled at compile time via macros in `mimi_config.
 |-------|---------|-------------|
 | `MIMI_GPIO_CONFIG_SECTION` | `1` | Enable GPIO tools (gpio_write / gpio_read / gpio_read_all) |
 | `MIMI_PWM_CONFIG_SECTION` | `1` | Enable servo/PWM tools (servo_set / servo_release) |
+| `MIMI_SCRIPT_CONFIG_SECTION` | `1` | Enable script tools (script_create / script_run / script_list / script_remove) |
 | `MIMI_TELEGRAM_CONFIG_SECTION` | `0` | Enable Telegram channel (set to `1` to enable) |
 
 After changing, rebuild: `idf.py fullclean && idf.py build`

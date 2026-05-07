@@ -137,6 +137,10 @@
 /* Skills */
 #define MIMI_SKILLS_PREFIX           MIMI_SPIFFS_BASE "/skills/"
 
+/* Scripts */
+#define MIMI_SCRIPT_CONFIG_SECTION   1   /* enable Script tools */
+#define MIMI_SCRIPT_DIR              MIMI_SPIFFS_BASE "/scripts"
+
 /* WebSocket Gateway */
 #define MIMI_WS_PORT                 18789
 #define MIMI_WS_MAX_CLIENTS          4
