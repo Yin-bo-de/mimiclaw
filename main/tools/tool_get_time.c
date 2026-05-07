@@ -17,6 +17,20 @@ static const char *MONTHS[] = {
     "Jul","Aug","Sep","Oct","Nov","Dec"
 };
 
+/* Time sources: China-first, then global fallbacks.
+   Each entry provides a full HTTPS URL (for direct) and a host (for proxy). */
+typedef struct {
+    const char *url;   /* full URL for direct HTTPS HEAD */
+    const char *host;  /* hostname for proxy CONNECT tunnel */
+} time_source_t;
+
+static const time_source_t TIME_SOURCES[] = {
+    { "https://www.baidu.com/",       "www.baidu.com"       },
+    { "https://www.aliyun.com/",      "www.aliyun.com"      },
+    { "https://api.telegram.org/",    "api.telegram.org"    },
+};
+#define TIME_SOURCE_COUNT (sizeof(TIME_SOURCES) / sizeof(TIME_SOURCES[0]))
+
 /* Parse "Sat, 01 Feb 2025 10:25:00 GMT" → set system clock, return formatted string */
 static bool parse_and_set_time(const char *date_str, char *out, size_t out_size)
 {
@@ -61,49 +75,69 @@ static bool parse_and_set_time(const char *date_str, char *out, size_t out_size)
     return true;
 }
 
-/* Fetch time via proxy: HEAD request to api.telegram.org, parse Date header */
+/* Fetch time via proxy: try each time source in order until one succeeds */
 static esp_err_t fetch_time_via_proxy(char *out, size_t out_size)
 {
-    proxy_conn_t *conn = proxy_conn_open("api.telegram.org", 443, 10000);
-    if (!conn) return ESP_ERR_HTTP_CONNECT;
+    for (size_t i = 0; i < TIME_SOURCE_COUNT; i++) {
+        const time_source_t *src = &TIME_SOURCES[i];
+        ESP_LOGI(TAG, "Trying proxy time source: %s", src->host);
 
-    const char *req =
-        "HEAD / HTTP/1.1\r\n"
-        "Host: api.telegram.org\r\n"
-        "Connection: close\r\n\r\n";
+        proxy_conn_t *conn = proxy_conn_open(src->host, 443, 10000);
+        if (!conn) {
+            ESP_LOGW(TAG, "Proxy connect failed for %s, trying next", src->host);
+            continue;
+        }
 
-    if (proxy_conn_write(conn, req, strlen(req)) < 0) {
+        char req[256];
+        int rlen = snprintf(req, sizeof(req),
+            "HEAD / HTTP/1.1\r\n"
+            "Host: %s\r\n"
+            "Connection: close\r\n\r\n", src->host);
+
+        if (proxy_conn_write(conn, req, rlen) < 0) {
+            proxy_conn_close(conn);
+            ESP_LOGW(TAG, "Proxy write failed for %s, trying next", src->host);
+            continue;
+        }
+
+        char buf[1024];
+        int total = 0;
+        while (total < (int)sizeof(buf) - 1) {
+            int n = proxy_conn_read(conn, buf + total, sizeof(buf) - 1 - total, 10000);
+            if (n <= 0) break;
+            total += n;
+            buf[total] = '\0';
+            if (strstr(buf, "\r\n\r\n")) break;
+        }
         proxy_conn_close(conn);
-        return ESP_ERR_HTTP_WRITE_DATA;
+
+        char *date_hdr = strcasestr(buf, "\r\nDate: ");
+        if (!date_hdr) {
+            ESP_LOGW(TAG, "No Date header from %s, trying next", src->host);
+            continue;
+        }
+        date_hdr += 8;
+
+        char *eol = strstr(date_hdr, "\r\n");
+        if (!eol) {
+            ESP_LOGW(TAG, "Malformed Date header from %s, trying next", src->host);
+            continue;
+        }
+
+        char date_val[64];
+        size_t dlen = eol - date_hdr;
+        if (dlen >= sizeof(date_val)) {
+            ESP_LOGW(TAG, "Date header too long from %s, trying next", src->host);
+            continue;
+        }
+        memcpy(date_val, date_hdr, dlen);
+        date_val[dlen] = '\0';
+
+        if (parse_and_set_time(date_val, out, out_size)) return ESP_OK;
+
+        ESP_LOGW(TAG, "Failed to parse time from %s, trying next", src->host);
     }
-
-    char buf[1024];
-    int total = 0;
-    while (total < (int)sizeof(buf) - 1) {
-        int n = proxy_conn_read(conn, buf + total, sizeof(buf) - 1 - total, 10000);
-        if (n <= 0) break;
-        total += n;
-        buf[total] = '\0';
-        if (strstr(buf, "\r\n\r\n")) break;
-    }
-    proxy_conn_close(conn);
-
-    /* Find Date header */
-    char *date_hdr = strcasestr(buf, "\r\nDate: ");
-    if (!date_hdr) return ESP_ERR_NOT_FOUND;
-    date_hdr += 8;
-
-    char *eol = strstr(date_hdr, "\r\n");
-    if (!eol) return ESP_ERR_NOT_FOUND;
-
-    char date_val[64];
-    size_t dlen = eol - date_hdr;
-    if (dlen >= sizeof(date_val)) return ESP_ERR_NOT_FOUND;
-    memcpy(date_val, date_hdr, dlen);
-    date_val[dlen] = '\0';
-
-    if (!parse_and_set_time(date_val, out, out_size)) return ESP_FAIL;
-    return ESP_OK;
+    return ESP_ERR_NOT_FOUND;
 }
 
 /* Event handler that captures the Date response header */
@@ -130,31 +164,49 @@ static esp_err_t time_http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-/* Fetch time via direct HTTPS */
+/* Fetch time via direct HTTPS: try each time source in order until one succeeds */
 static esp_err_t fetch_time_direct(char *out, size_t out_size)
 {
-    time_header_ctx_t ctx = {0};
+    for (size_t i = 0; i < TIME_SOURCE_COUNT; i++) {
+        const time_source_t *src = &TIME_SOURCES[i];
+        ESP_LOGI(TAG, "Trying direct time source: %s", src->url);
 
-    esp_http_client_config_t config = {
-        .url = "https://api.telegram.org/",
-        .method = HTTP_METHOD_HEAD,
-        .timeout_ms = 10000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .event_handler = time_http_event_handler,
-        .user_data = &ctx,
-    };
+        time_header_ctx_t ctx = {0};
 
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) return ESP_FAIL;
+        esp_http_client_config_t config = {
+            .url = src->url,
+            .method = HTTP_METHOD_HEAD,
+            .timeout_ms = 10000,
+            .crt_bundle_attach = esp_crt_bundle_attach,
+            .event_handler = time_http_event_handler,
+            .user_data = &ctx,
+        };
 
-    esp_err_t err = esp_http_client_perform(client);
-    esp_http_client_cleanup(client);
+        esp_http_client_handle_t client = esp_http_client_init(&config);
+        if (!client) {
+            ESP_LOGW(TAG, "HTTP client init failed for %s, trying next", src->url);
+            continue;
+        }
 
-    if (err != ESP_OK) return err;
-    if (ctx.date_val[0] == '\0') return ESP_ERR_NOT_FOUND;
+        esp_err_t err = esp_http_client_perform(client);
+        esp_http_client_cleanup(client);
 
-    if (!parse_and_set_time(ctx.date_val, out, out_size)) return ESP_FAIL;
-    return ESP_OK;
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "HTTP request failed for %s (%s), trying next",
+                     src->url, esp_err_to_name(err));
+            continue;
+        }
+
+        if (ctx.date_val[0] == '\0') {
+            ESP_LOGW(TAG, "No Date header from %s, trying next", src->url);
+            continue;
+        }
+
+        if (parse_and_set_time(ctx.date_val, out, out_size)) return ESP_OK;
+
+        ESP_LOGW(TAG, "Failed to parse time from %s, trying next", src->url);
+    }
+    return ESP_ERR_NOT_FOUND;
 }
 
 esp_err_t tool_get_time_execute(const char *input_json, char *output, size_t output_size)

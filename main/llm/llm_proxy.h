@@ -59,3 +59,13 @@ esp_err_t llm_chat_tools(const char *system_prompt,
                          cJSON *messages,
                          const char *tools_json,
                          llm_response_t *resp);
+
+/**
+ * Save the custom LLM API URL to NVS (for OpenAI-compatible providers).
+ */
+esp_err_t llm_set_api_url(const char *api_url);
+
+/**
+ * Save the custom LLM API host to NVS (for OpenAI-compatible providers).
+ */
+esp_err_t llm_set_api_host(const char *api_host);

@@ -5,6 +5,7 @@
 #include "tools/tool_files.h"
 #include "tools/tool_cron.h"
 #include "tools/tool_gpio.h"
+#include "tools/tool_pwm.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -12,7 +13,7 @@
 
 static const char *TAG = "tools";
 
-#define MAX_TOOLS 16
+#define MAX_TOOLS 20
 
 static mimi_tool_t s_tools[MAX_TOOLS];
 static int s_tool_count = 0;
@@ -213,6 +214,32 @@ esp_err_t tool_registry_init(void)
         .execute = tool_gpio_read_all_execute,
     };
     register_tool(&ga);
+
+    /* Register PWM/Servo tools */
+    tool_pwm_init();
+
+    mimi_tool_t ss = {
+        .name = "servo_set",
+        .description = "Set a servo motor angle (0-180 degrees) on a GPIO pin. Generates 50Hz PWM signal for standard servos.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"gpio\":{\"type\":\"integer\",\"description\":\"GPIO pin number\"},"
+            "\"angle\":{\"type\":\"integer\",\"description\":\"Target angle in degrees (0-180)\"}},"
+            "\"required\":[\"gpio\",\"angle\"]}",
+        .execute = tool_servo_set_execute,
+    };
+    register_tool(&ss);
+
+    mimi_tool_t sr = {
+        .name = "servo_release",
+        .description = "Stop PWM output and release a servo on a GPIO pin. The servo will no longer hold its position.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"gpio\":{\"type\":\"integer\",\"description\":\"GPIO pin number\"}},"
+            "\"required\":[\"gpio\"]}",
+        .execute = tool_servo_release_execute,
+    };
+    register_tool(&sr);
 
     build_tools_json();
 

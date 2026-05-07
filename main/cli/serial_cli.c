@@ -171,6 +171,42 @@ static int cmd_set_model_provider(int argc, char **argv)
     return 0;
 }
 
+/* --- set_api_url command --- */
+static struct {
+    struct arg_str *url;
+    struct arg_end *end;
+} api_url_args;
+
+static int cmd_set_api_url(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&api_url_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, api_url_args.end, argv[0]);
+        return 1;
+    }
+    llm_set_api_url(api_url_args.url->sval[0]);
+    printf("API URL saved.\n");
+    return 0;
+}
+
+/* --- set_api_host command --- */
+static struct {
+    struct arg_str *host;
+    struct arg_end *end;
+} api_host_args;
+
+static int cmd_set_api_host(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&api_host_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, api_host_args.end, argv[0]);
+        return 1;
+    }
+    llm_set_api_host(api_host_args.host->sval[0]);
+    printf("API host saved.\n");
+    return 0;
+}
+
 /* --- memory_read command --- */
 static int cmd_memory_read(int argc, char **argv)
 {
@@ -317,6 +353,24 @@ static int cmd_set_tavily_key(int argc, char **argv)
     }
     tool_web_search_set_tavily_key(tavily_key_args.key->sval[0]);
     printf("Tavily API key saved.\n");
+    return 0;
+}
+
+/* --- set_bing_key command --- */
+static struct {
+    struct arg_str *key;
+    struct arg_end *end;
+} bing_key_args;
+
+static int cmd_set_bing_key(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&bing_key_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, bing_key_args.end, argv[0]);
+        return 1;
+    }
+    tool_web_search_set_bing_key(bing_key_args.key->sval[0]);
+    printf("Bing Search API key saved.\n");
     return 0;
 }
 
@@ -563,10 +617,13 @@ static int cmd_config_show(int argc, char **argv)
     print_config("API Key",    MIMI_NVS_LLM,    MIMI_NVS_KEY_API_KEY,  MIMI_SECRET_API_KEY,    true);
     print_config("Model",      MIMI_NVS_LLM,    MIMI_NVS_KEY_MODEL,    MIMI_SECRET_MODEL,      false);
     print_config("Provider",   MIMI_NVS_LLM,    MIMI_NVS_KEY_PROVIDER, MIMI_SECRET_MODEL_PROVIDER, false);
+    print_config("API URL",    MIMI_NVS_LLM,    MIMI_NVS_KEY_LLM_API_URL,  MIMI_SECRET_LLM_API_URL,  false);
+    print_config("API Host",   MIMI_NVS_LLM,    MIMI_NVS_KEY_LLM_API_HOST, MIMI_SECRET_LLM_API_HOST, false);
     print_config("Proxy Host", MIMI_NVS_PROXY,  MIMI_NVS_KEY_PROXY_HOST, MIMI_SECRET_PROXY_HOST, false);
     print_config_u16("Proxy Port", MIMI_NVS_PROXY, MIMI_NVS_KEY_PROXY_PORT, MIMI_SECRET_PROXY_PORT);
     print_config("Search Key", MIMI_NVS_SEARCH, MIMI_NVS_KEY_API_KEY,  MIMI_SECRET_SEARCH_KEY, true);
     print_config("Tavily Key", MIMI_NVS_SEARCH, MIMI_NVS_KEY_TAVILY_KEY, MIMI_SECRET_TAVILY_KEY, true);
+    print_config("Bing Key",   MIMI_NVS_SEARCH, MIMI_NVS_KEY_BING_KEY,   MIMI_SECRET_BING_KEY,   true);
     printf("=============================\n");
     return 0;
 }
@@ -897,6 +954,28 @@ esp_err_t serial_cli_init(void)
     };
     esp_console_cmd_register(&provider_cmd);
 
+    /* set_api_url */
+    api_url_args.url = arg_str1(NULL, NULL, "<url>", "Custom LLM API URL (e.g. https://ark.cn-beijing.volces.com/api/v3/chat/completions)");
+    api_url_args.end = arg_end(1);
+    esp_console_cmd_t api_url_cmd = {
+        .command = "set_api_url",
+        .help = "Set custom LLM API URL for OpenAI-compatible providers",
+        .func = &cmd_set_api_url,
+        .argtable = &api_url_args,
+    };
+    esp_console_cmd_register(&api_url_cmd);
+
+    /* set_api_host */
+    api_host_args.host = arg_str1(NULL, NULL, "<host>", "Custom LLM API host (e.g. ark.cn-beijing.volces.com)");
+    api_host_args.end = arg_end(1);
+    esp_console_cmd_t api_host_cmd = {
+        .command = "set_api_host",
+        .help = "Set custom LLM API host for proxy/CONNECT tunnel",
+        .func = &cmd_set_api_host,
+        .argtable = &api_host_args,
+    };
+    esp_console_cmd_register(&api_host_cmd);
+
     /* skill_list */
     esp_console_cmd_t skill_list_cmd = {
         .command = "skill_list",
@@ -994,6 +1073,17 @@ esp_err_t serial_cli_init(void)
         .argtable = &tavily_key_args,
     };
     esp_console_cmd_register(&tavily_key_cmd);
+
+    /* set_bing_key */
+    bing_key_args.key = arg_str1(NULL, NULL, "<key>", "Bing Search API key");
+    bing_key_args.end = arg_end(1);
+    esp_console_cmd_t bing_key_cmd = {
+        .command = "set_bing_key",
+        .help = "Set Bing Search API key for web_search tool",
+        .func = &cmd_set_bing_key,
+        .argtable = &bing_key_args,
+    };
+    esp_console_cmd_register(&bing_key_cmd);
 
     /* set_proxy */
     proxy_args.host = arg_str1(NULL, NULL, "<host>", "Proxy host/IP");

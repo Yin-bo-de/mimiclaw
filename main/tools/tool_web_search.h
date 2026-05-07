@@ -27,3 +27,8 @@ esp_err_t tool_web_search_set_key(const char *api_key);
  * Save Tavily API key to NVS.
  */
 esp_err_t tool_web_search_set_tavily_key(const char *api_key);
+
+/**
+ * Save Bing Search API key to NVS.
+ */
+esp_err_t tool_web_search_set_bing_key(const char *api_key);

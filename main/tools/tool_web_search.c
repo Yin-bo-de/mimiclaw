@@ -17,10 +17,12 @@ typedef enum {
     SEARCH_PROVIDER_NONE = 0,
     SEARCH_PROVIDER_BRAVE,
     SEARCH_PROVIDER_TAVILY,
+    SEARCH_PROVIDER_BING,
 } search_provider_t;
 
 static char s_brave_key[128] = {0};
 static char s_tavily_key[128] = {0};
+static char s_bing_key[128] = {0};
 static search_provider_t s_provider = SEARCH_PROVIDER_NONE;
 
 #define SEARCH_BUF_SIZE     (16 * 1024)
@@ -59,6 +61,9 @@ esp_err_t tool_web_search_init(void)
     if (MIMI_SECRET_TAVILY_KEY[0] != '\0') {
         strncpy(s_tavily_key, MIMI_SECRET_TAVILY_KEY, sizeof(s_tavily_key) - 1);
     }
+    if (MIMI_SECRET_BING_KEY[0] != '\0') {
+        strncpy(s_bing_key, MIMI_SECRET_BING_KEY, sizeof(s_bing_key) - 1);
+    }
 
     /* NVS overrides take highest priority (set via CLI) */
     nvs_handle_t nvs;
@@ -73,10 +78,17 @@ esp_err_t tool_web_search_init(void)
         if (nvs_get_str(nvs, MIMI_NVS_KEY_TAVILY_KEY, tmp, &len) == ESP_OK && tmp[0]) {
             strncpy(s_tavily_key, tmp, sizeof(s_tavily_key) - 1);
         }
+        memset(tmp, 0, sizeof(tmp));
+        len = sizeof(tmp);
+        if (nvs_get_str(nvs, MIMI_NVS_KEY_BING_KEY, tmp, &len) == ESP_OK && tmp[0]) {
+            strncpy(s_bing_key, tmp, sizeof(s_bing_key) - 1);
+        }
         nvs_close(nvs);
     }
 
-    if (s_tavily_key[0]) {
+    if (s_bing_key[0]) {
+        s_provider = SEARCH_PROVIDER_BING;
+    } else if (s_tavily_key[0]) {
         s_provider = SEARCH_PROVIDER_TAVILY;
     } else if (s_brave_key[0]) {
         s_provider = SEARCH_PROVIDER_BRAVE;
@@ -86,6 +98,8 @@ esp_err_t tool_web_search_init(void)
 
     if (s_provider == SEARCH_PROVIDER_TAVILY) {
         ESP_LOGI(TAG, "Web search initialized (provider=tavily)");
+    } else if (s_provider == SEARCH_PROVIDER_BING) {
+        ESP_LOGI(TAG, "Web search initialized (provider=bing)");
     } else if (s_provider == SEARCH_PROVIDER_BRAVE) {
         ESP_LOGI(TAG, "Web search initialized (provider=brave)");
     } else {
@@ -411,13 +425,140 @@ static esp_err_t tavily_search_via_proxy(const char *query, search_buf_t *sb)
     return ESP_OK;
 }
 
+/* ── Bing Search ──────────────────────────────────────────────── */
+
+static void format_bing_results(cJSON *root, char *output, size_t output_size)
+{
+    cJSON *web_pages = cJSON_GetObjectItem(root, "webPages");
+    if (!web_pages) {
+        snprintf(output, output_size, "No web results found.");
+        return;
+    }
+
+    cJSON *results = cJSON_GetObjectItem(web_pages, "value");
+    if (!results || !cJSON_IsArray(results) || cJSON_GetArraySize(results) == 0) {
+        snprintf(output, output_size, "No web results found.");
+        return;
+    }
+
+    size_t off = 0;
+    int idx = 0;
+    cJSON *item;
+    cJSON_ArrayForEach(item, results) {
+        if (idx >= SEARCH_RESULT_COUNT) break;
+        if (off >= output_size - 1) break;
+
+        cJSON *name = cJSON_GetObjectItem(item, "name");
+        cJSON *url = cJSON_GetObjectItem(item, "url");
+        cJSON *snippet = cJSON_GetObjectItem(item, "snippet");
+
+        int written = snprintf(output + off, output_size - off,
+            "%d. %s\n   %s\n   %s\n\n",
+            idx + 1,
+            (name && cJSON_IsString(name)) ? name->valuestring : "(no title)",
+            (url && cJSON_IsString(url)) ? url->valuestring : "",
+            (snippet && cJSON_IsString(snippet)) ? snippet->valuestring : "");
+
+        if (written < 0) break;
+        if ((size_t)written >= output_size - off) {
+            off = output_size - 1;
+            break;
+        }
+        off += (size_t)written;
+        idx++;
+    }
+}
+
+static esp_err_t bing_search_direct(const char *url, search_buf_t *sb)
+{
+    esp_http_client_config_t config = {
+        .url = url,
+        .event_handler = http_event_handler,
+        .user_data = sb,
+        .timeout_ms = 15000,
+        .buffer_size = 4096,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) return ESP_FAIL;
+
+    esp_http_client_set_header(client, "Ocp-Apim-Subscription-Key", s_bing_key);
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK) return err;
+    if (status != 200) {
+        ESP_LOGE(TAG, "Bing API returned %d", status);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t bing_search_via_proxy(const char *path, search_buf_t *sb)
+{
+    proxy_conn_t *conn = proxy_conn_open("api.bing.microsoft.com", 443, 15000);
+    if (!conn) return ESP_ERR_HTTP_CONNECT;
+
+    char header[512];
+    int hlen = snprintf(header, sizeof(header),
+        "GET %s HTTP/1.1\r\n"
+        "Host: api.bing.microsoft.com\r\n"
+        "Ocp-Apim-Subscription-Key: %s\r\n"
+        "Connection: close\r\n\r\n",
+        path, s_bing_key);
+
+    if (proxy_conn_write(conn, header, hlen) < 0) {
+        proxy_conn_close(conn);
+        return ESP_ERR_HTTP_WRITE_DATA;
+    }
+
+    char tmp[4096];
+    size_t total = 0;
+    while (1) {
+        int n = proxy_conn_read(conn, tmp, sizeof(tmp), 15000);
+        if (n <= 0) break;
+        size_t copy = (total + n < sb->cap - 1) ? (size_t)n : sb->cap - 1 - total;
+        if (copy > 0) {
+            memcpy(sb->data + total, tmp, copy);
+            total += copy;
+        }
+    }
+    sb->data[total] = '\0';
+    sb->len = total;
+    proxy_conn_close(conn);
+
+    int status = 0;
+    if (total > 5 && strncmp(sb->data, "HTTP/", 5) == 0) {
+        const char *sp = strchr(sb->data, ' ');
+        if (sp) status = atoi(sp + 1);
+    }
+
+    char *body = strstr(sb->data, "\r\n\r\n");
+    if (body) {
+        body += 4;
+        size_t blen = total - (body - sb->data);
+        memmove(sb->data, body, blen);
+        sb->len = blen;
+        sb->data[sb->len] = '\0';
+    }
+
+    if (status != 200) {
+        ESP_LOGE(TAG, "Bing API returned %d via proxy", status);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
 /* ── Execute ──────────────────────────────────────────────────── */
 
 esp_err_t tool_web_search_execute(const char *input_json, char *output, size_t output_size)
 {
     if (s_provider == SEARCH_PROVIDER_NONE) {
         snprintf(output, output_size,
-                 "Error: No search API key configured. Set MIMI_SECRET_TAVILY_KEY or MIMI_SECRET_SEARCH_KEY in mimi_secrets.h");
+                 "Error: No search API key configured. Set MIMI_SECRET_BING_KEY, MIMI_SECRET_TAVILY_KEY or MIMI_SECRET_SEARCH_KEY in mimi_secrets.h");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -461,6 +602,17 @@ esp_err_t tool_web_search_execute(const char *input_json, char *output, size_t o
         } else {
             err = tavily_search_direct(query_copy, &sb);
         }
+    } else if (s_provider == SEARCH_PROVIDER_BING) {
+        char path[384];
+        snprintf(path, sizeof(path),
+                 "/v7.0/search?q=%s&count=%d", encoded_query, SEARCH_RESULT_COUNT);
+        if (http_proxy_is_enabled()) {
+            err = bing_search_via_proxy(path, &sb);
+        } else {
+            char url[512];
+            snprintf(url, sizeof(url), "https://api.bing.microsoft.com%s", path);
+            err = bing_search_direct(url, &sb);
+        }
     } else {
         char path[384];
         snprintf(path, sizeof(path),
@@ -491,6 +643,8 @@ esp_err_t tool_web_search_execute(const char *input_json, char *output, size_t o
 
     if (s_provider == SEARCH_PROVIDER_TAVILY) {
         format_tavily_results(root, output, output_size);
+    } else if (s_provider == SEARCH_PROVIDER_BING) {
+        format_bing_results(root, output, output_size);
     } else {
         format_results(root, output, output_size);
     }
@@ -525,7 +679,23 @@ esp_err_t tool_web_search_set_tavily_key(const char *api_key)
     nvs_close(nvs);
 
     strncpy(s_tavily_key, api_key, sizeof(s_tavily_key) - 1);
-    s_provider = SEARCH_PROVIDER_TAVILY;
+    if (s_provider == SEARCH_PROVIDER_NONE || s_provider == SEARCH_PROVIDER_BRAVE) {
+        s_provider = SEARCH_PROVIDER_TAVILY;
+    }
     ESP_LOGI(TAG, "Tavily API key saved");
+    return ESP_OK;
+}
+
+esp_err_t tool_web_search_set_bing_key(const char *api_key)
+{
+    nvs_handle_t nvs;
+    ESP_ERROR_CHECK(nvs_open(MIMI_NVS_SEARCH, NVS_READWRITE, &nvs));
+    ESP_ERROR_CHECK(nvs_set_str(nvs, MIMI_NVS_KEY_BING_KEY, api_key));
+    ESP_ERROR_CHECK(nvs_commit(nvs));
+    nvs_close(nvs);
+
+    strncpy(s_bing_key, api_key, sizeof(s_bing_key) - 1);
+    s_provider = SEARCH_PROVIDER_BING;
+    ESP_LOGI(TAG, "Bing API key saved");
     return ESP_OK;
 }
