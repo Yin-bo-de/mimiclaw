@@ -219,28 +219,54 @@ esp_err_t tool_registry_init(void)
     /* Register PWM/Servo tools */
     tool_pwm_init();
 
-    mimi_tool_t ss = {
-        .name = "servo_set",
-        .description = "Set a servo motor angle (0-180 degrees) on a GPIO pin. Generates 50Hz PWM signal for standard servos.",
+    mimi_tool_t ps = {
+        .name = "pwm_set",
+        .description = "Set PWM pulse width on a GPIO pin. Generates 50Hz signal. "
+        "Use pulse_us (microseconds) to control servos, ESCs, or any PWM device. "
+        "Standard servo range: 500-2500 us. Standard ESC range: 1000-2000 us.",
         .input_schema_json =
             "{\"type\":\"object\","
             "\"properties\":{\"gpio\":{\"type\":\"integer\",\"description\":\"GPIO pin number\"},"
-            "\"angle\":{\"type\":\"integer\",\"description\":\"Target angle in degrees (0-180)\"}},"
-            "\"required\":[\"gpio\",\"angle\"]}",
-        .execute = tool_servo_set_execute,
+            "\"pulse_us\":{\"type\":\"integer\",\"description\":\"Pulse width in microseconds (0-20000)\"}},"
+            "\"required\":[\"gpio\",\"pulse_us\"]}",
+        .execute = tool_pwm_set_execute,
     };
-    register_tool(&ss);
+    register_tool(&ps);
 
-    mimi_tool_t sr = {
-        .name = "servo_release",
-        .description = "Stop PWM output and release a servo on a GPIO pin. The servo will no longer hold its position.",
+    mimi_tool_t pr = {
+        .name = "pwm_release",
+        .description = "Stop PWM output and release a channel on a GPIO pin.",
         .input_schema_json =
             "{\"type\":\"object\","
             "\"properties\":{\"gpio\":{\"type\":\"integer\",\"description\":\"GPIO pin number\"}},"
             "\"required\":[\"gpio\"]}",
-        .execute = tool_servo_release_execute,
+        .execute = tool_pwm_release_execute,
     };
-    register_tool(&sr);
+    register_tool(&pr);
+
+    mimi_tool_t rs = {
+        .name = "rc_steer",
+        .description = "Control RC car steering. -100 = full left, 0 = center, +100 = full right. "
+        "Uses steering servo GPIO and pulse calibration from rc.json config.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"steer_pct\":{\"type\":\"integer\",\"description\":\"Steering percentage: -100 (full left) to 100 (full right), 0 = center\"}},"
+            "\"required\":[\"steer_pct\"]}",
+        .execute = tool_rc_steer_execute,
+    };
+    register_tool(&rs);
+
+    mimi_tool_t rt = {
+        .name = "rc_throttle",
+        .description = "Control RC car motor speed and direction. -100 = full reverse, 0 = stop, +100 = full forward. "
+        "Uses ESC GPIO and pulse calibration from rc.json config.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"throttle_pct\":{\"type\":\"integer\",\"description\":\"Throttle percentage: -100 (full reverse) to 100 (full forward), 0 = stop\"}},"
+            "\"required\":[\"throttle_pct\"]}",
+        .execute = tool_rc_throttle_execute,
+    };
+    register_tool(&rt);
 
     /* Register Script tools */
     tool_script_init();

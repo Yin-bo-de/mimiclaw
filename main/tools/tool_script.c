@@ -15,7 +15,7 @@
 static const char *TAG = "tool_script";
 
 #define SCRIPT_DIR     MIMI_SCRIPT_DIR
-#define SCRIPT_MAX_STEPS   20
+#define SCRIPT_MAX_STEPS   100
 #define SCRIPT_MAX_NAME    32
 #define SCRIPT_OUTPUT_BUF  512
 
