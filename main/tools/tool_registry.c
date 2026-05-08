@@ -7,6 +7,7 @@
 #include "tools/tool_gpio.h"
 #include "tools/tool_pwm.h"
 #include "tools/tool_script.h"
+#include "tools/tool_rule.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -14,7 +15,7 @@
 
 static const char *TAG = "tools";
 
-#define MAX_TOOLS 20
+#define MAX_TOOLS 30
 
 static mimi_tool_t s_tools[MAX_TOOLS];
 static int s_tool_count = 0;
@@ -320,6 +321,73 @@ esp_err_t tool_registry_init(void)
         .execute = tool_script_remove_execute,
     };
     register_tool(&sm);
+
+    /* Register Rule Engine tools */
+    mimi_tool_t ra = {
+        .name = "rule_add",
+        .description = "Create a persistent rule that continuously monitors sensors and automatically executes actions when conditions are met. "
+            "Use this when the user wants automatic responses like 'when motion detected, turn on light' or 'if temperature exceeds 30, start fan'. "
+            "Rules run independently without LLM involvement, making them efficient for real-time control loops. "
+            "A rule consists of: trigger (read a sensor), condition (compare the value), actions (what to do when true), and optional else_actions (what to do when false).",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"name\":{\"type\":\"string\",\"description\":\"Short name for the rule\"},"
+            "\"interval_s\":{\"type\":\"integer\",\"description\":\"Seconds between evaluations (e.g. 5 for fast response)\"},"
+            "\"cooldown_s\":{\"type\":\"integer\",\"description\":\"Minimum seconds between firings (prevents jitter, default 0)\"},"
+            "\"trigger\":{\"type\":\"object\",\"description\":\"Sensor to read\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"gpio_read\",\"gpio_read_all\"],\"description\":\"gpio_read for single pin, gpio_read_all for all pins\"},\"pin\":{\"type\":\"integer\",\"description\":\"GPIO pin number (required for gpio_read)\"}},\"required\":[\"type\"]},"
+            "\"condition\":{\"type\":\"object\",\"description\":\"Comparison operator\",\"properties\":{\"op\":{\"type\":\"string\",\"enum\":[\"==\",\"!=\",\">\",\"<\",\">=\",\"<=\",\"any_high\",\"all_low\"],\"description\":\"Comparison operator\"},\"value\":{\"type\":\"integer\",\"description\":\"Threshold value (0 or 1 for GPIO, numeric for future sensors)\"}},\"required\":[\"op\",\"value\"]},"
+            "\"actions\":{\"type\":\"array\",\"description\":\"Actions to execute when condition is TRUE (required, max 4)\",\"items\":{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"gpio_write\",\"pwm_set\",\"pwm_release\",\"script_run\",\"escalate\"]},\"pin\":{\"type\":\"integer\"},\"value\":{\"type\":\"integer\"},\"script_name\":{\"type\":\"string\"},\"escalate_msg\":{\"type\":\"string\"}},\"required\":[\"type\"]}}},"
+            "\"else_actions\":{\"type\":\"array\",\"description\":\"Optional actions when condition is FALSE (max 4)\",\"items\":{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"gpio_write\",\"pwm_set\",\"pwm_release\",\"script_run\",\"escalate\"]},\"pin\":{\"type\":\"integer\"},\"value\":{\"type\":\"integer\"},\"script_name\":{\"type\":\"string\"},\"escalate_msg\":{\"type\":\"string\"}},\"required\":[\"type\"]}}"
+            "},"
+            "\"required\":[\"name\",\"interval_s\",\"trigger\",\"condition\",\"actions\"]}",
+        .execute = tool_rule_add_execute,
+    };
+    register_tool(&ra);
+
+    mimi_tool_t rr = {
+        .name = "rule_remove",
+        .description = "Remove a rule by its ID.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"rule_id\":{\"type\":\"string\",\"description\":\"8-character rule ID\"}},"
+            "\"required\":[\"rule_id\"]}",
+        .execute = tool_rule_remove_execute,
+    };
+    register_tool(&rr);
+
+    mimi_tool_t rl = {
+        .name = "rule_list",
+        .description = "List all rules with their status, triggers, conditions, and action counts.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_rule_list_execute,
+    };
+    register_tool(&rl);
+
+    mimi_tool_t ren = {
+        .name = "rule_enable",
+        .description = "Enable a disabled rule by its ID.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"rule_id\":{\"type\":\"string\",\"description\":\"8-character rule ID\"}},"
+            "\"required\":[\"rule_id\"]}",
+        .execute = tool_rule_enable_execute,
+    };
+    register_tool(&ren);
+
+    mimi_tool_t rdis = {
+        .name = "rule_disable",
+        .description = "Disable a rule by its ID without removing it.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"rule_id\":{\"type\":\"string\",\"description\":\"8-character rule ID\"}},"
+            "\"required\":[\"rule_id\"]}",
+        .execute = tool_rule_disable_execute,
+    };
+    register_tool(&rdis);
 
     build_tools_json();
 

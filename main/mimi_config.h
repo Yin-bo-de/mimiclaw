@@ -143,6 +143,13 @@
 #define MIMI_SCRIPT_CONFIG_SECTION   1   /* enable Script tools */
 #define MIMI_SCRIPT_DIR              MIMI_SPIFFS_BASE "/scripts"
 
+/* Rule Engine */
+#define MIMI_RULE_CONFIG_SECTION     1   /* enable Rule Engine */
+#define MIMI_RULE_FILE               MIMI_SPIFFS_BASE "/rules.json"
+#define MIMI_RULE_MAX_RULES          16
+#define MIMI_RULE_STACK              (4 * 1024)
+#define MIMI_RULE_PRIO               4
+
 /* WebSocket Gateway */
 #define MIMI_WS_PORT                 18789
 #define MIMI_WS_MAX_CLIENTS          4
