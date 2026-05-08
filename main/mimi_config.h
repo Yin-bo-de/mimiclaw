@@ -126,6 +126,8 @@
 #define MIMI_CRON_CHECK_INTERVAL_MS  (60 * 1000)
 #define MIMI_HEARTBEAT_FILE          MIMI_SPIFFS_BASE "/HEARTBEAT.md"
 #define MIMI_HEARTBEAT_INTERVAL_MS   (30 * 60 * 1000)
+#define MIMI_HEARTBEAT_STACK         (4 * 1024)
+#define MIMI_HEARTBEAT_PRIO          3
 
 /* GPIO */
 #define MIMI_GPIO_CONFIG_SECTION     1   /* enable GPIO tools */
