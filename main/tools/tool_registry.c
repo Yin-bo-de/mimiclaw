@@ -247,12 +247,12 @@ esp_err_t tool_registry_init(void)
 
     mimi_tool_t sc = {
         .name = "script_create",
-        .description = "Create a named script with an ordered list of tool calls. Scripts run without LLM, saving tokens on repeated actions.",
+        .description = "Create a named script with an ordered list of tool calls (max 20 steps). Scripts run without LLM, saving tokens on repeated actions. Keep scripts small and focused.",
         .input_schema_json =
             "{\"type\":\"object\","
             "\"properties\":{"
-            "\"name\":{\"type\":\"string\",\"description\":\"Script name (letters, digits, underscore)\"},"
-            "\"steps\":{\"type\":\"array\",\"description\":\"Ordered list of tool calls\",\"items\":{\"type\":\"object\","
+            "\"name\":{\"type\":\"string\",\"description\":\"Script name. MUST be ASCII letters, digits, underscore only. No CJK, spaces, or special chars. Example: servo_wave\"},"
+            "\"steps\":{\"type\":\"array\",\"description\":\"Ordered list of tool calls (max 20 steps). Keep scripts small.\",\"items\":{\"type\":\"object\","
             "\"properties\":{\"tool\":{\"type\":\"string\",\"description\":\"Tool name to call\"},"
             "\"input\":{\"type\":\"object\",\"description\":\"Tool input as JSON object\"},"
             "\"delay_ms\":{\"type\":\"integer\",\"description\":\"Optional delay in ms after this step\"}},"
