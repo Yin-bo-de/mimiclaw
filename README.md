@@ -159,6 +159,22 @@ idf.py -p PORT flash monitor
 >
 > </details>
 
+### Pre-flash SPIFFS Data
+
+MimiClaw can pre-flash files into SPIFFS so they exist on first boot. Place files under `spiffs_data/` — they are automatically bundled into the SPIFFS image and flashed with the firmware.
+
+```
+spiffs_data/
+├── config/
+│   ├── SOUL.md          # AI personality
+│   ├── USER.md          # User preferences
+│   └── rc.json          # RC car / servo calibration (see below)
+├── memory/
+│   └── MEMORY.md        # Long-term memory
+└── skills/
+    └── *.md             # Custom skill instructions
+```
+
 ### CLI Commands (via UART/COM port)
 
 Connect via serial to configure or debug. **Config commands** let you change settings without recompiling — just plug in a USB cable anywhere.
@@ -219,7 +235,7 @@ The ESP-IDF console/REPL is configured to use UART by default (`CONFIG_ESP_CONSO
 - USB (JTAG) handles flash/download and provides secondary serial output
 - UART (COM) provides the primary interactive console for the REPL
 - macOS: both appear as `/dev/cu.usbmodem*` or `/dev/cu.usbserial-*` — run `ls /dev/cu.usb*` to identify
-- Linux: USB (JTAG) → `/dev/ttyACM0`, UART → `/dev/ttyUSB0`
+- Linux: USB (JTAG) -> `/dev/ttyACM0`, UART -> `/dev/ttyUSB0`
 
 **Recommended workflow:**
 
@@ -245,6 +261,8 @@ MimiClaw stores everything as plain text files you can read and edit:
 | `MEMORY.md` | Long-term memory — things the bot should always remember |
 | `HEARTBEAT.md` | Task list the bot checks periodically and acts on autonomously |
 | `cron.json` | Scheduled jobs — recurring or one-shot tasks created by the AI |
+| `rules.json` | Autonomous rules — sensor-driven control loops that run without LLM |
+| `scripts/` | Named scripts — ordered tool call sequences for repeated actions |
 | `2026-02-05.md` | Daily notes — what happened today |
 | `tg_12345.jsonl` | Chat history — your conversation with the bot |
 
@@ -259,8 +277,10 @@ MimiClaw supports tool calling for both Anthropic and OpenAI — the LLM can cal
 | `gpio_write` | Set a GPIO pin HIGH or LOW — control LEDs, relays, and digital outputs |
 | `gpio_read` | Read a GPIO pin state (HIGH/LOW) — check switches, sensors, and digital inputs |
 | `gpio_read_all` | Read all allowed GPIO pin states at once |
-| `servo_set` | Set a servo motor angle (0-180°) on a GPIO pin, generating 50Hz PWM signal |
-| `servo_release` | Stop PWM output and release a servo — it will no longer hold position |
+| `pwm_set` | Set PWM pulse width (0-20000 us) on a GPIO pin — universal for servos, ESCs, LEDs |
+| `pwm_release` | Stop PWM output and release a channel |
+| `rc_steer` | Control RC car steering: -100 = left, 0 = center, +100 = right |
+| `rc_throttle` | Control RC car motor: -100 = reverse, 0 = stop, +100 = forward |
 | `script_create` | Create a named script (ordered tool calls) to automate repeated actions without LLM |
 | `script_run` | Execute a stored script by name — runs all steps directly, zero token cost |
 | `script_list` | List all stored scripts with step counts |
@@ -268,8 +288,40 @@ MimiClaw supports tool calling for both Anthropic and OpenAI — the LLM can cal
 | `cron_add` | Schedule a recurring or one-shot task (the LLM creates cron jobs on its own) |
 | `cron_list` | List all scheduled cron jobs |
 | `cron_remove` | Remove a cron job by ID |
+| `rule_add` | Create an autonomous rule — sensor-driven control loop without LLM involvement |
+| `rule_list` | List all rules with status and configuration |
+| `rule_remove` | Remove a rule by ID |
+| `rule_enable` / `rule_disable` | Toggle a rule without removing it |
 
 To enable web search, set a [Tavily API key](https://app.tavily.com/home) via `MIMI_SECRET_TAVILY_KEY` (preferred), or a [Brave Search API key](https://brave.com/search/api/) via `MIMI_SECRET_SEARCH_KEY` in `mimi_secrets.h`.
+
+## Rules (Autonomous Control Loops)
+
+The rule engine lets MimiClaw run **continuous sensor-driven control loops without LLM involvement** — perfect for real-time automation like "when motion detected, turn on light" or "if GPIO 4 is HIGH, set GPIO 5 HIGH".
+
+Rules run in a dedicated FreeRTOS task and evaluate conditions periodically. When a condition is met, actions execute directly (no token cost). Rules support:
+
+- **Triggers**: `gpio_read` (single pin), `gpio_read_all` (all pins)
+- **Conditions**: `==`, `!=`, `>`, `<`, `>=`, `<=`, `any_high`, `all_low`
+- **Actions**: `gpio_write`, `pwm_set`, `pwm_release`, `script_run`, `escalate`
+- **Else actions**: run when the condition flips to false (e.g. turn off light when motion stops)
+- **Cooldown timer**: prevents rule jitter
+
+Rules are persisted to `rules.json` on SPIFFS and survive reboots. The LLM can create, list, enable, disable, and remove rules via the `rule_*` tools.
+
+**Example rule JSON** (for `rule_add`):
+
+```json
+{
+  "name": "motion_light",
+  "interval_s": 5,
+  "cooldown_s": 30,
+  "trigger": {"type": "gpio_read", "pin": 4},
+  "condition": {"op": "==", "value": 1},
+  "actions": [{"type": "gpio_write", "pin": 5, "value": 1}],
+  "else_actions": [{"type": "gpio_write", "pin": 5, "value": 0}]
+}
+```
 
 ## Cron Tasks
 
@@ -283,6 +335,40 @@ The heartbeat service periodically reads `HEARTBEAT.md` from SPIFFS and checks f
 
 This turns MimiClaw into a proactive assistant — write tasks to `HEARTBEAT.md` and the bot will pick them up on the next heartbeat cycle (default: every 30 minutes).
 
+## RC Car / Servo Calibration
+
+RC car steering and throttle are controlled via PWM and calibrated from `/spiffs/config/rc.json`. All fields are optional — missing values use defaults.
+
+```json
+{
+  "steer_gpio": 4,
+  "steer_center_us": 1500,
+  "steer_min_us": 1000,
+  "steer_max_us": 2000,
+  "steer_reversed": false,
+  "throttle_gpio": 5,
+  "throttle_neutral_us": 1500,
+  "throttle_forward_us": 2000,
+  "throttle_reverse_us": 1000,
+  "throttle_reversed": false
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `steer_gpio` | 4 | Steering servo GPIO pin |
+| `steer_center_us` | 1500 | Center/neutral pulse width (us) |
+| `steer_min_us` | 1000 | Full-left pulse width (us) |
+| `steer_max_us` | 2000 | Full-right pulse width (us) |
+| `steer_reversed` | false | Flip left/right direction |
+| `throttle_gpio` | 5 | Throttle ESC GPIO pin |
+| `throttle_neutral_us` | 1500 | Stop/neutral pulse width (us) |
+| `throttle_forward_us` | 2000 | Full-forward pulse width (us) |
+| `throttle_reverse_us` | 1000 | Full-reverse pulse width (us) |
+| `throttle_reversed` | false | Flip forward/reverse direction |
+
+Place this file at `spiffs_data/config/rc.json` to pre-flash it, or create it at runtime via `write_file`.
+
 ## Module Toggles
 
 Some modules can be enabled/disabled at compile time via macros in `mimi_config.h`:
@@ -290,8 +376,9 @@ Some modules can be enabled/disabled at compile time via macros in `mimi_config.
 | Macro | Default | Description |
 |-------|---------|-------------|
 | `MIMI_GPIO_CONFIG_SECTION` | `1` | Enable GPIO tools (gpio_write / gpio_read / gpio_read_all) |
-| `MIMI_PWM_CONFIG_SECTION` | `1` | Enable servo/PWM tools (servo_set / servo_release) |
+| `MIMI_PWM_CONFIG_SECTION` | `1` | Enable PWM/RC tools (pwm_set / pwm_release / rc_steer / rc_throttle) |
 | `MIMI_SCRIPT_CONFIG_SECTION` | `1` | Enable script tools (script_create / script_run / script_list / script_remove) |
+| `MIMI_RULE_CONFIG_SECTION` | `1` | Enable rule engine (rule_add / rule_list / rule_remove / rule_enable / rule_disable) |
 | `MIMI_TELEGRAM_CONFIG_SECTION` | `0` | Enable Telegram channel (set to `1` to enable) |
 
 After changing, rebuild: `idf.py fullclean && idf.py build`
@@ -305,6 +392,7 @@ After changing, rebuild: `idf.py fullclean && idf.py build`
 - **Multi-provider** — supports both Anthropic (Claude) and OpenAI (GPT), switchable at runtime
 - **Cron scheduler** — the AI can schedule its own recurring and one-shot tasks, persisted across reboots
 - **Heartbeat** — periodically checks a task file and prompts the AI to act autonomously
+- **Rule engine** — autonomous sensor-driven control loops that run without LLM, zero token cost
 - **Tool use** — ReAct agent loop with tool calling for both providers
 
 ## For Developers
