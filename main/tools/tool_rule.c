@@ -15,6 +15,7 @@ static rule_trigger_type_t parse_trigger_type(const char *s)
 {
     if (strcmp(s, "gpio_read") == 0) return RULE_TRIGGER_GPIO_READ;
     if (strcmp(s, "gpio_read_all") == 0) return RULE_TRIGGER_GPIO_READ_ALL;
+    if (strcmp(s, "interval") == 0) return RULE_TRIGGER_INTERVAL;
     return RULE_TRIGGER_GPIO_READ;
 }
 
@@ -28,6 +29,8 @@ static rule_condition_op_t parse_condition_op(const char *s)
     if (strcmp(s, "<=") == 0) return RULE_OP_LE;
     if (strcmp(s, "any_high") == 0) return RULE_OP_ANY_HIGH;
     if (strcmp(s, "all_low") == 0) return RULE_OP_ALL_LOW;
+    if (strcmp(s, "mod_eq") == 0) return RULE_OP_MOD_EQ;
+    if (strcmp(s, "mod_ne") == 0) return RULE_OP_MOD_NE;
     return RULE_OP_EQ;
 }
 
@@ -111,9 +114,22 @@ esp_err_t tool_rule_add_execute(const char *input_json, char *output, size_t out
     cJSON *trigger_j = cJSON_GetObjectItem(root, "trigger");
     if (trigger_j && cJSON_IsObject(trigger_j)) {
         const char *tt = cJSON_GetStringValue(cJSON_GetObjectItem(trigger_j, "type"));
-        if (tt) rule.trigger.type = parse_trigger_type(tt);
-        cJSON *pin_j = cJSON_GetObjectItem(trigger_j, "pin");
-        if (pin_j && cJSON_IsNumber(pin_j)) rule.trigger.pin = pin_j->valueint;
+        if (tt) {
+            rule.trigger.type = parse_trigger_type(tt);
+        } else {
+            snprintf(output, output_size, "Error: 'trigger.type' required (gpio_read, gpio_read_all, or interval)");
+            cJSON_Delete(root);
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (rule.trigger.type != RULE_TRIGGER_INTERVAL) {
+            cJSON *pin_j = cJSON_GetObjectItem(trigger_j, "pin");
+            if (!pin_j || !cJSON_IsNumber(pin_j)) {
+                snprintf(output, output_size, "Error: 'trigger.pin' required for gpio_read / gpio_read_all");
+                cJSON_Delete(root);
+                return ESP_ERR_INVALID_ARG;
+            }
+            rule.trigger.pin = pin_j->valueint;
+        }
     } else {
         snprintf(output, output_size, "Error: 'trigger' required object with 'type' (and 'pin' for gpio_read)");
         cJSON_Delete(root);

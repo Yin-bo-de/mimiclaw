@@ -36,6 +36,7 @@ static const char *trigger_type_str(rule_trigger_type_t t)
     switch (t) {
         case RULE_TRIGGER_GPIO_READ: return "gpio_read";
         case RULE_TRIGGER_GPIO_READ_ALL: return "gpio_read_all";
+        case RULE_TRIGGER_INTERVAL: return "interval";
         default: return "unknown";
     }
 }
@@ -51,6 +52,8 @@ static const char *op_str(rule_condition_op_t op)
         case RULE_OP_LE: return "<=";
         case RULE_OP_ANY_HIGH: return "any_high";
         case RULE_OP_ALL_LOW: return "all_low";
+        case RULE_OP_MOD_EQ: return "mod_eq";
+        case RULE_OP_MOD_NE: return "mod_ne";
         default: return "?";
     }
 }
@@ -121,6 +124,8 @@ static bool check_condition(rule_condition_t *cond, int value)
         case RULE_OP_LE:       return value <= cond->value;
         case RULE_OP_ANY_HIGH: return value != 0;  /* value = 1 if any pin high */
         case RULE_OP_ALL_LOW:  return value == 0;  /* value = 1 if any pin high */
+        case RULE_OP_MOD_EQ:   return cond->value != 0 && (value % cond->value) == 0;
+        case RULE_OP_MOD_NE:   return cond->value != 0 && (value % cond->value) != 0;
         default:               return false;
     }
 }
@@ -219,6 +224,7 @@ static void evaluate_rule(rule_t *rule)
     /* Read trigger */
     int trigger_value = 0;
     bool trigger_ok = false;
+    bool is_interval = (rule->trigger.type == RULE_TRIGGER_INTERVAL);
 
     switch (rule->trigger.type) {
         case RULE_TRIGGER_GPIO_READ:
@@ -226,6 +232,10 @@ static void evaluate_rule(rule_t *rule)
             break;
         case RULE_TRIGGER_GPIO_READ_ALL:
             trigger_ok = eval_trigger_gpio_read_all(&trigger_value);
+            break;
+        case RULE_TRIGGER_INTERVAL:
+            trigger_ok = true;
+            trigger_value = rule->counter;
             break;
         default:
             ESP_LOGW(TAG, "Rule '%s': unknown trigger type %d", rule->name, rule->trigger.type);
@@ -243,12 +253,13 @@ static void evaluate_rule(rule_t *rule)
     ESP_LOGD(TAG, "Rule '%s': trigger=%d condition=%s",
              rule->name, trigger_value, condition_met ? "true" : "false");
 
-    /* Check cooldown */
+    /* Check cooldown (only for actions branch; else_actions bypass cooldown) */
     if (condition_met) {
         if (rule->cooldown_s > 0 && rule->last_fire > 0 &&
             (now - rule->last_fire) < (int64_t)rule->cooldown_s) {
             ESP_LOGD(TAG, "Rule '%s': in cooldown (%llds left)",
                      rule->name, (long long)(rule->cooldown_s - (now - rule->last_fire)));
+            if (is_interval) rule->counter++;  /* still increment counter even in cooldown */
             return;
         }
 
@@ -257,11 +268,16 @@ static void evaluate_rule(rule_t *rule)
         ESP_LOGI(TAG, "Rule '%s' FIRE (count=%d, value=%d)",
                  rule->name, rule->fire_count, trigger_value);
     } else {
-        /* else_actions don't have cooldown — they run whenever condition flips to false */
+        /* else_actions don't have cooldown */
     }
 
     /* Execute actions */
     execute_actions(rule, condition_met);
+
+    /* Increment counter after each evaluation for interval triggers */
+    if (is_interval) {
+        rule->counter++;
+    }
 }
 
 /* ── FreeRTOS task ─────────────────────────────────────────────── */
@@ -288,6 +304,7 @@ static rule_trigger_type_t parse_trigger_type(const char *s)
 {
     if (strcmp(s, "gpio_read") == 0) return RULE_TRIGGER_GPIO_READ;
     if (strcmp(s, "gpio_read_all") == 0) return RULE_TRIGGER_GPIO_READ_ALL;
+    if (strcmp(s, "interval") == 0) return RULE_TRIGGER_INTERVAL;
     return RULE_TRIGGER_GPIO_READ;
 }
 
@@ -301,6 +318,8 @@ static rule_condition_op_t parse_condition_op(const char *s)
     if (strcmp(s, "<=") == 0) return RULE_OP_LE;
     if (strcmp(s, "any_high") == 0) return RULE_OP_ANY_HIGH;
     if (strcmp(s, "all_low") == 0) return RULE_OP_ALL_LOW;
+    if (strcmp(s, "mod_eq") == 0) return RULE_OP_MOD_EQ;
+    if (strcmp(s, "mod_ne") == 0) return RULE_OP_MOD_NE;
     return RULE_OP_EQ;
 }
 
@@ -392,13 +411,18 @@ static esp_err_t rule_load(void)
         v = cJSON_GetObjectItem(item, "fire_count");
         r->fire_count = (v && cJSON_IsNumber(v)) ? v->valueint : 0;
 
+        v = cJSON_GetObjectItem(item, "counter");
+        r->counter = (v && cJSON_IsNumber(v)) ? v->valueint : 0;
+
         /* Trigger */
         cJSON *trigger_j = cJSON_GetObjectItem(item, "trigger");
         if (trigger_j && cJSON_IsObject(trigger_j)) {
             const char *tt = cJSON_GetStringValue(cJSON_GetObjectItem(trigger_j, "type"));
             if (tt) r->trigger.type = parse_trigger_type(tt);
-            cJSON *pin_j = cJSON_GetObjectItem(trigger_j, "pin");
-            if (pin_j && cJSON_IsNumber(pin_j)) r->trigger.pin = pin_j->valueint;
+            if (r->trigger.type != RULE_TRIGGER_INTERVAL) {
+                cJSON *pin_j = cJSON_GetObjectItem(trigger_j, "pin");
+                if (pin_j && cJSON_IsNumber(pin_j)) r->trigger.pin = pin_j->valueint;
+            }
         }
 
         /* Condition */
@@ -481,6 +505,7 @@ esp_err_t rule_engine_save(void)
         cJSON_AddNumberToObject(item, "last_eval", (double)r->last_eval);
         cJSON_AddNumberToObject(item, "last_fire", (double)r->last_fire);
         cJSON_AddNumberToObject(item, "fire_count", r->fire_count);
+        cJSON_AddNumberToObject(item, "counter", r->counter);
 
         /* Trigger */
         cJSON *trigger_j = cJSON_CreateObject();

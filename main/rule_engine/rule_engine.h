@@ -8,6 +8,7 @@
 typedef enum {
     RULE_TRIGGER_GPIO_READ = 0,
     RULE_TRIGGER_GPIO_READ_ALL,
+    RULE_TRIGGER_INTERVAL,  /* time-based unconditional trigger */
 } rule_trigger_type_t;
 
 typedef struct {
@@ -26,6 +27,8 @@ typedef enum {
     RULE_OP_LE,
     RULE_OP_ANY_HIGH,   /* only for gpio_read_all */
     RULE_OP_ALL_LOW,    /* only for gpio_read_all */
+    RULE_OP_MOD_EQ,     /* counter % value == 0, for interval triggers */
+    RULE_OP_MOD_NE,     /* counter % value != 0, for interval triggers */
 } rule_condition_op_t;
 
 typedef struct {
@@ -65,6 +68,7 @@ typedef struct {
     int64_t last_eval;    /* epoch of last evaluation */
     int64_t last_fire;    /* epoch of last action fire */
     int fire_count;       /* total times fired (for diagnostics) */
+    int counter;          /* increment on each evaluation (for interval triggers) */
     rule_trigger_t trigger;
     rule_condition_t condition;
     int actions_count;
