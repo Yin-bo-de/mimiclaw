@@ -179,6 +179,25 @@ spiffs_data/
 
 Connect via serial to configure or debug. **Config commands** let you change settings without recompiling — just plug in a USB cable anywhere.
 
+**How to open the CLI:**
+
+```bash
+# Find your COM port first
+ls /dev/cu.usb*          # macOS — look for cu.usbserial-* (not usbmodem-*)
+ls /dev/ttyUSB*          # Linux
+
+# Option 1: idf.py monitor (exit with Ctrl+])
+idf.py -p /dev/cu.usbserial-XXXX monitor
+
+# Option 2: screen (exit with Ctrl+A then K)
+screen /dev/cu.usbserial-XXXX 115200
+
+# Option 3: minicom
+minicom -D /dev/cu.usbserial-XXXX -b 115200
+```
+
+> **Must use the COM (UART) port**, not the USB (JTAG) port. You'll see the `mimi>` prompt when connected.
+
 **Runtime config** (saved to NVS, overrides build-time defaults):
 
 ```
