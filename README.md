@@ -204,9 +204,10 @@ mimi> memory_write "content"   # write to MEMORY.md
 mimi> heap_info                # how much RAM is free?
 mimi> session_list             # list all chat sessions
 mimi> session_clear 12345      # wipe a conversation
-mimi> heartbeat_trigger           # manually trigger a heartbeat check
-mimi> cron_start                  # start cron scheduler now
-mimi> restart                     # reboot
+mimi> heartbeat_trigger        # manually trigger a heartbeat check
+mimi> cron_start               # start cron scheduler now
+mimi> ota_update https://...   # OTA firmware update over WiFi (reboots on success)
+mimi> restart                  # reboot
 ```
 
 ### USB (JTAG) vs UART: Which Port for What
@@ -292,6 +293,7 @@ MimiClaw supports tool calling for both Anthropic and OpenAI — the LLM can cal
 | `rule_list` | List all rules with status and configuration |
 | `rule_remove` | Remove a rule by ID |
 | `rule_enable` / `rule_disable` | Toggle a rule without removing it |
+| `ota_update` | Download and flash firmware from an HTTPS URL — device reboots on success |
 
 To enable web search, set a [Tavily API key](https://app.tavily.com/home) via `MIMI_SECRET_TAVILY_KEY` (preferred), or a [Brave Search API key](https://brave.com/search/api/) via `MIMI_SECRET_SEARCH_KEY` in `mimi_secrets.h`.
 

@@ -8,6 +8,7 @@
 #include "tools/tool_pwm.h"
 #include "tools/tool_script.h"
 #include "tools/tool_rule.h"
+#include "tools/tool_ota.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -335,8 +336,8 @@ esp_err_t tool_registry_init(void)
             "\"name\":{\"type\":\"string\",\"description\":\"Short name for the rule\"},"
             "\"interval_s\":{\"type\":\"integer\",\"description\":\"Seconds between evaluations (e.g. 5 for fast response)\"},"
             "\"cooldown_s\":{\"type\":\"integer\",\"description\":\"Minimum seconds between firings (prevents jitter, default 0)\"},"
-            "\"trigger\":{\"type\":\"object\",\"description\":\"Sensor to read\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"gpio_read\",\"gpio_read_all\"],\"description\":\"gpio_read for single pin, gpio_read_all for all pins\"},\"pin\":{\"type\":\"integer\",\"description\":\"GPIO pin number (required for gpio_read)\"}},\"required\":[\"type\"]},"
-            "\"condition\":{\"type\":\"object\",\"description\":\"Comparison operator\",\"properties\":{\"op\":{\"type\":\"string\",\"enum\":[\"==\",\"!=\",\">\",\"<\",\">=\",\"<=\",\"any_high\",\"all_low\"],\"description\":\"Comparison operator\"},\"value\":{\"type\":\"integer\",\"description\":\"Threshold value (0 or 1 for GPIO, numeric for future sensors)\"}},\"required\":[\"op\",\"value\"]},"
+            "\"trigger\":{\"type\":\"object\",\"description\":\"Sensor to read\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"gpio_read\",\"gpio_read_all\",\"interval\"],\"description\":\"gpio_read for single pin, gpio_read_all for all pins, interval for time-based unconditional trigger\"},\"pin\":{\"type\":\"integer\",\"description\":\"GPIO pin number (required for gpio_read, optional for interval)\"}},\"required\":[\"type\"]},"
+            "\"condition\":{\"type\":\"object\",\"description\":\"Comparison operator\",\"properties\":{\"op\":{\"type\":\"string\",\"enum\":[\"==\",\"!=\",\">\",\"<\",\">=\",\"<=\",\"any_high\",\"all_low\",\"mod_eq\",\"mod_ne\"],\"description\":\"Comparison operator\"},\"value\":{\"type\":\"integer\",\"description\":\"Threshold value (0 or 1 for GPIO, numeric for future sensors)\"}},\"required\":[\"op\",\"value\"]},"
             "\"actions\":{\"type\":\"array\",\"description\":\"Actions to execute when condition is TRUE (required, max 4)\",\"items\":{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"gpio_write\",\"pwm_set\",\"pwm_release\",\"script_run\",\"escalate\"]},\"pin\":{\"type\":\"integer\"},\"value\":{\"type\":\"integer\"},\"script_name\":{\"type\":\"string\"},\"escalate_msg\":{\"type\":\"string\"}},\"required\":[\"type\"]}}},"
             "\"else_actions\":{\"type\":\"array\",\"description\":\"Optional actions when condition is FALSE (max 4)\",\"items\":{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"gpio_write\",\"pwm_set\",\"pwm_release\",\"script_run\",\"escalate\"]},\"pin\":{\"type\":\"integer\"},\"value\":{\"type\":\"integer\"},\"script_name\":{\"type\":\"string\"},\"escalate_msg\":{\"type\":\"string\"}},\"required\":[\"type\"]}}"
             "},"
@@ -388,6 +389,20 @@ esp_err_t tool_registry_init(void)
         .execute = tool_rule_disable_execute,
     };
     register_tool(&rdis);
+
+    /* Register OTA update tool */
+    mimi_tool_t ota = {
+        .name = "ota_update",
+        .description = "Perform an OTA firmware update from an HTTPS URL. "
+            "Downloads the firmware binary and flashes it. Device reboots automatically on success. "
+            "Only call this when the user explicitly requests a firmware update.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"url\":{\"type\":\"string\",\"description\":\"HTTPS URL to the firmware .bin file\"}},"
+            "\"required\":[\"url\"]}",
+        .execute = tool_ota_execute,
+    };
+    register_tool(&ota);
 
     build_tools_json();
 

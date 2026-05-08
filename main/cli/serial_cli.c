@@ -14,6 +14,7 @@
 #include "cron/cron_service.h"
 #include "heartbeat/heartbeat.h"
 #include "skills/skill_loader.h"
+#include "ota/ota_manager.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -831,6 +832,74 @@ static int cmd_web_search(int argc, char **argv)
     return (err == ESP_OK) ? 0 : 1;
 }
 
+/* --- ota_update command --- */
+static struct {
+    struct arg_str *url;
+    struct arg_end *end;
+} ota_update_args;
+
+typedef struct {
+    char url[512];
+    esp_err_t result;
+    SemaphoreHandle_t done;
+} cli_ota_ctx_t;
+
+static void cli_ota_task(void *arg)
+{
+    cli_ota_ctx_t *ctx = (cli_ota_ctx_t *)arg;
+    ctx->result = ota_update_from_url(ctx->url);
+    /* Only reaches here on failure; success triggers esp_restart() */
+    xSemaphoreGive(ctx->done);
+    vTaskDelete(NULL);
+}
+
+static int cmd_ota_update(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&ota_update_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, ota_update_args.end, argv[0]);
+        return 1;
+    }
+
+    const char *url = ota_update_args.url->sval[0];
+    printf("Starting OTA from: %s\n", url);
+    printf("Please wait up to 2 minutes. Device will reboot on success.\n");
+
+    cli_ota_ctx_t *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) {
+        printf("Out of memory.\n");
+        return 1;
+    }
+    strncpy(ctx->url, url, sizeof(ctx->url) - 1);
+    ctx->done = xSemaphoreCreateBinary();
+    if (!ctx->done) {
+        free(ctx);
+        printf("Out of memory.\n");
+        return 1;
+    }
+
+    if (xTaskCreate(cli_ota_task, "cli_ota", 8192, ctx, 5, NULL) != pdPASS) {
+        vSemaphoreDelete(ctx->done);
+        free(ctx);
+        printf("Failed to start OTA task.\n");
+        return 1;
+    }
+
+    if (xSemaphoreTake(ctx->done, pdMS_TO_TICKS(130000)) != pdTRUE) {
+        printf("OTA timed out.\n");
+        vSemaphoreDelete(ctx->done);
+        free(ctx);
+        return 1;
+    }
+
+    esp_err_t err = ctx->result;
+    vSemaphoreDelete(ctx->done);
+    free(ctx);
+
+    printf("OTA failed: %s\n", esp_err_to_name(err));
+    return 1;
+}
+
 /* --- restart command --- */
 static int cmd_restart(int argc, char **argv)
 {
@@ -1164,6 +1233,17 @@ esp_err_t serial_cli_init(void)
         .argtable = &web_search_args,
     };
     esp_console_cmd_register(&web_search_cmd);
+
+    /* ota_update */
+    ota_update_args.url = arg_str1(NULL, NULL, "<url>", "HTTPS URL to firmware .bin file");
+    ota_update_args.end = arg_end(1);
+    esp_console_cmd_t ota_update_cmd = {
+        .command = "ota_update",
+        .help = "OTA firmware update: ota_update <https://...firmware.bin>",
+        .func = &cmd_ota_update,
+        .argtable = &ota_update_args,
+    };
+    esp_console_cmd_register(&ota_update_cmd);
 
     /* restart */
     esp_console_cmd_t restart_cmd = {
