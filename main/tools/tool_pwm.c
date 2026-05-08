@@ -41,10 +41,12 @@ typedef struct {
     int steer_center_us;
     int steer_min_us;
     int steer_max_us;
+    bool steer_reversed;
     int throttle_gpio;
     int throttle_neutral_us;
     int throttle_forward_us;
     int throttle_reverse_us;
+    bool throttle_reversed;
     bool loaded;                /* whether rc.json was read successfully */
 } rc_config_t;
 
@@ -168,6 +170,8 @@ static void rc_load_defaults(void)
     s_rc.throttle_neutral_us  = RC_THROTTLE_NEUTRAL;
     s_rc.throttle_forward_us  = RC_THROTTLE_FWD_US;
     s_rc.throttle_reverse_us  = RC_THROTTLE_REV_US;
+    s_rc.steer_reversed      = false;
+    s_rc.throttle_reversed   = false;
     s_rc.loaded = false;
 }
 
@@ -215,6 +219,10 @@ static void rc_load_config(void)
     if (cJSON_IsNumber(v)) s_rc.throttle_forward_us = v->valueint;
     v = cJSON_GetObjectItem(root, "throttle_reverse_us");
     if (cJSON_IsNumber(v)) s_rc.throttle_reverse_us = v->valueint;
+    v = cJSON_GetObjectItem(root, "steer_reversed");
+    if (v) s_rc.steer_reversed = cJSON_IsTrue(v);
+    v = cJSON_GetObjectItem(root, "throttle_reversed");
+    if (v) s_rc.throttle_reversed = cJSON_IsTrue(v);
 
     cJSON_Delete(root);
     s_rc.loaded = true;
@@ -334,6 +342,7 @@ esp_err_t tool_rc_steer_execute(const char *input_json, char *output, size_t out
     }
 
     int pct = (int)pct_obj->valuedouble;
+    if (s_rc.steer_reversed) pct = -pct;
     if (pct < -100 || pct > 100) {
         snprintf(output, output_size, "Error: steer_pct must be -100 to 100, got %d", pct);
         cJSON_Delete(root);
@@ -380,6 +389,7 @@ esp_err_t tool_rc_throttle_execute(const char *input_json, char *output, size_t 
     }
 
     int pct = (int)pct_obj->valuedouble;
+    if (s_rc.throttle_reversed) pct = -pct;
     if (pct < -100 || pct > 100) {
         snprintf(output, output_size, "Error: throttle_pct must be -100 to 100, got %d", pct);
         cJSON_Delete(root);
