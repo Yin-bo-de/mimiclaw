@@ -32,6 +32,9 @@ esp_err_t driver_gps_stop(void);
 /* Get the latest reading */
 gps_reading_t driver_gps_get_reading(void);
 
+/* Enable/disable NMEA raw sentence debug output */
+void driver_gps_set_debug(bool enable);
+
 #ifdef __cplusplus
 }
 #endif

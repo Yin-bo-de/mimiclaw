@@ -834,6 +834,7 @@ static int cmd_imu_calibrate(int argc, char **argv)
 static struct {
     struct arg_int *count;
     struct arg_int *delay_ms;
+    struct arg_lit *verbose;
     struct arg_end *end;
 } gps_test_args;
 
@@ -841,6 +842,7 @@ static int cmd_gps_test(int argc, char **argv)
 {
     int count = 10;
     int delay_ms = 1000;
+    bool verbose = false;
 
     if (argc > 1) {
         int nerrors = arg_parse(argc, argv, (void **)&gps_test_args);
@@ -851,11 +853,15 @@ static int cmd_gps_test(int argc, char **argv)
             if (gps_test_args.delay_ms->count > 0) {
                 delay_ms = (int)gps_test_args.delay_ms->ival[0];
             }
+            if (gps_test_args.verbose->count > 0) {
+                verbose = true;
+            }
         } else {
             arg_print_errors(stderr, gps_test_args.end, argv[0]);
         }
     }
 
+    driver_gps_set_debug(verbose);
     printf("NEO-6M GPS Test - %d samples, %dms delay\n", count, delay_ms);
 
     for (int i = 0; i < count; i++) {
@@ -873,6 +879,36 @@ static int cmd_gps_test(int argc, char **argv)
             vTaskDelay(pdMS_TO_TICKS(delay_ms));
         }
     }
+
+    return 0;
+}
+
+/* --- gps_nmea command --- */
+static struct {
+    struct arg_int *duration;
+    struct arg_end *end;
+} gps_nmea_args;
+
+static int cmd_gps_nmea(int argc, char **argv)
+{
+    int duration_ms = 10000;
+
+    if (argc > 1) {
+        int nerrors = arg_parse(argc, argv, (void **)&gps_nmea_args);
+        if (nerrors == 0) {
+            if (gps_nmea_args.duration->count > 0) {
+                duration_ms = (int)gps_nmea_args.duration->ival[0];
+            }
+        } else {
+            arg_print_errors(stderr, gps_nmea_args.end, argv[0]);
+        }
+    }
+
+    printf("Printing raw NMEA for %d ms...\n", duration_ms);
+    driver_gps_set_debug(true);
+    vTaskDelay(pdMS_TO_TICKS(duration_ms));
+    driver_gps_set_debug(false);
+    printf("NMEA dump done.\n");
 
     return 0;
 }
@@ -1474,14 +1510,26 @@ esp_err_t serial_cli_init(void)
     /* gps_test */
     gps_test_args.count = arg_int0("c", "count", "<n>", "Number of samples (default: 10)");
     gps_test_args.delay_ms = arg_int0("d", "delay", "<ms>", "Delay between samples in ms (default: 1000)");
+    gps_test_args.verbose = arg_lit0("v", "verbose", "Print raw NMEA sentences during test");
     gps_test_args.end = arg_end(2);
     esp_console_cmd_t gps_test_cmd = {
         .command = "gps_test",
-        .help = "Test NEO-6M GPS sensor readings: gps_test [-c <n>] [-d <ms>]",
+        .help = "Test NEO-6M GPS sensor readings: gps_test [-c <n>] [-d <ms>] [-v]",
         .func = &cmd_gps_test,
         .argtable = &gps_test_args,
     };
     esp_console_cmd_register(&gps_test_cmd);
+
+    /* gps_nmea */
+    gps_nmea_args.duration = arg_int0("d", "duration", "<ms>", "Duration to dump NMEA in ms (default: 10000)");
+    gps_nmea_args.end = arg_end(2);
+    esp_console_cmd_t gps_nmea_cmd = {
+        .command = "gps_nmea",
+        .help = "Print raw NMEA sentences for a duration: gps_nmea [-d <ms>]",
+        .func = &cmd_gps_nmea,
+        .argtable = &gps_nmea_args,
+    };
+    esp_console_cmd_register(&gps_nmea_cmd);
 
     /* tool_exec */
     esp_console_cmd_t tool_exec_cmd = {

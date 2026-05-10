@@ -85,7 +85,7 @@ esp_err_t context_build_system_prompt(char *buf, size_t size)
         "- Max 8 PWM channels can be active simultaneously.\n\n"
         "## RC Car Control\n"
         "You can control an RC car with steering servo and motor ESC.\n"
-        "- rc_steer(steer_pct): +100 = full left, 0 = center, -100 = full right. "
+        "- rc_steer(steer_pct): -100 = full left, 0 = center, +100 = full right. "
         "When the user says \"左转50%%\" or \"右转30%%\" or \"回正\", use this tool.\n"
         "- rc_throttle(throttle_pct): -100 = full reverse, 0 = stop, +100 = full forward. "
         "When the user says \"前进50%%\" or \"后退30%%\" or \"停车\", use this tool.\n"

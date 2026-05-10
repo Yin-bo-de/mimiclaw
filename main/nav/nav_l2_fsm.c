@@ -210,6 +210,8 @@ static void fsm_cruise(const nav_situation_t *sit, const nav_config_t *cfg)
         steer = clamp_int((int)(cfg->heading_kp * herr),
                           -cfg->heading_max_steer_pct,
                            cfg->heading_max_steer_pct);
+        ESP_LOGI(TAG, "NAV: goal_bearing=%.1f° yaw=%.1f° error=%.1f° steer=%d",
+                 bearing, sit->yaw_deg, herr, steer);
     }
 
     /* Check for obstacle */

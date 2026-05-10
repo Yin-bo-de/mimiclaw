@@ -390,6 +390,22 @@ RC car steering and throttle are controlled via PWM and calibrated from `/spiffs
 
 Place this file at `spiffs_data/config/rc.json` to pre-flash it, or create it at runtime via `write_file`.
 
+**CLI 调试命令：**
+
+通过串口 REPL 可直接控制舵机和电机（无需 LLM）：
+
+```
+mimi> tool_exec rc_steer {"steer_pct":60}     # 右转（百分比 -100~100）
+mimi> tool_exec rc_steer {"steer_pct":-60}    # 左转
+mimi> tool_exec rc_steer {"steer_pct":0}      # 回正
+mimi> tool_exec rc_throttle {"throttle_pct":35}   # 前进 35%
+mimi> tool_exec rc_throttle {"throttle_pct":0}    # 停止
+```
+
+> **注意：** `tool_exec` 的 JSON 参数中**不能有空格**。`{"steer_pct":60}` 是对的，`{"steer_pct": 60}` 会报错（空格导致 JSON 被截断）。
+
+> **转向方向修正：** 如果 `steer_pct:60` 实际使车辆左转，说明舵机方向反了。修改 `spiffs_data/config/rc.json` 中 `"steer_reversed": true`，然后重新烧录 SPIFFS（`idf.py build flash`）即可。
+
 ## Module Toggles
 
 Some modules can be enabled/disabled at compile time via macros in `mimi_config.h`:

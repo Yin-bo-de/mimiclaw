@@ -20,6 +20,7 @@ static SemaphoreHandle_t s_reading_mutex = NULL;
 static TaskHandle_t s_task_handle = NULL;
 static bool s_initialized = false;
 static bool s_running = false;
+static bool s_debug_nmea = false;
 
 /* NMEA line buffer */
 #define NMEA_LINE_BUFFER_SIZE  128
@@ -200,6 +201,11 @@ static void process_nmea_line(char *line)
     if (!nmea_checksum_valid(line)) {
         ESP_LOGV(TAG, "Checksum invalid: %s", line);
         return;
+    }
+
+    /* Debug: print raw NMEA */
+    if (s_debug_nmea) {
+        ESP_LOGI(TAG, "NMEA: %s", line);
     }
 
     /* Check sentence type */
@@ -389,4 +395,10 @@ gps_reading_t driver_gps_get_reading(void)
     }
 
     return reading;
+}
+
+void driver_gps_set_debug(bool enable)
+{
+    s_debug_nmea = enable;
+    ESP_LOGI(TAG, "NMEA debug %s", enable ? "enabled" : "disabled");
 }

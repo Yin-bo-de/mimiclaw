@@ -40,7 +40,12 @@ static void send_trigger(int trig_gpio)
     gpio_set_level(trig_gpio, 0);
 }
 
-/* Measure echo on a single channel, returns distance in cm, -1 if invalid */
+/* Measure echo on a single channel, returns distance in cm.
+ * -1  = hardware fault / abnormal echo (too short)
+ * >=2 = actual measured distance
+ * When no echo is received (open space) or echo exceeds max_range,
+ * returns max_range to indicate "clear ahead" rather than "sensor failed".
+ */
 static int measure_single_channel(int trig_gpio, int echo_gpio, int max_range)
 {
     send_trigger(trig_gpio);
@@ -51,7 +56,8 @@ static int measure_single_channel(int trig_gpio, int echo_gpio, int max_range)
     /* Wait for echo to go high */
     while (gpio_get_level(echo_gpio) == 0) {
         if (esp_timer_get_time() > timeout) {
-            return -1;
+            /* No echo = open space, treat as max range (clear) */
+            return max_range;
         }
     }
 
@@ -61,7 +67,8 @@ static int measure_single_channel(int trig_gpio, int echo_gpio, int max_range)
     /* Wait for echo to go low */
     while (gpio_get_level(echo_gpio) == 1) {
         if (esp_timer_get_time() > timeout) {
-            return -1;
+            /* Echo too long = beyond max range, treat as max range (clear) */
+            return max_range;
         }
     }
 
@@ -69,6 +76,7 @@ static int measure_single_channel(int trig_gpio, int echo_gpio, int max_range)
     int64_t duration = echo_end - echo_start;
 
     if (duration < US_MIN_ECHO_US) {
+        /* Abnormally short echo — real hardware fault */
         return -1;
     }
 
@@ -78,8 +86,8 @@ static int measure_single_channel(int trig_gpio, int echo_gpio, int max_range)
      */
     int distance = (int)(duration / 58);
 
-    if (distance < 2 || distance > max_range) {
-        return -1;
+    if (distance > max_range) {
+        return max_range;
     }
 
     return distance;

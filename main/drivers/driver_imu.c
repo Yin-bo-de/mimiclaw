@@ -223,10 +223,14 @@ static void imu_update(const imu_config_t *config, int16_t *accel_raw, int16_t *
         dt = (float)(now_us - s_last_update_us) / 1000000.0f;
         if (dt > 0.1f) dt = 0.01f; /* clamp dt */
 
-        /* Gyro integration */
+        /* Gyro integration
+         * Note: s_yaw uses minus gz because navigation bearing (0=N, CW+)
+         * is clockwise-positive, while MPU6050 gz is counter-clockwise-positive.
+         * Minus gz makes yaw increase clockwise, matching bearing convention.
+         */
         s_roll += gx * dt;
         s_pitch += gy * dt;
-        s_yaw += gz * dt;
+        s_yaw -= gz * dt;
 
         /* Normalize yaw to 0..360 */
         while (s_yaw >= 360.0f) s_yaw -= 360.0f;
