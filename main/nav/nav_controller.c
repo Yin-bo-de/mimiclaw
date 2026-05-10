@@ -169,7 +169,7 @@ esp_err_t nav_controller_dummy_drive_start(int speed_pct)
     s_dummy_running   = true;
     s_state           = NAV_CTRL_RUNNING;
 
-    BaseType_t ok = xTaskCreate(dummy_drive_task, "nav_dummy", 2048, NULL, 4, NULL);
+    BaseType_t ok = xTaskCreate(dummy_drive_task, "nav_dummy", 4096, NULL, 4, NULL);
     if (ok != pdPASS) {
         s_dummy_running = false;
         s_state         = NAV_CTRL_IDLE;
