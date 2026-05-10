@@ -89,7 +89,7 @@ esp_err_t context_build_system_prompt(char *buf, size_t size)
         "When the user says \"左转50%%\" or \"右转30%%\" or \"回正\", use this tool.\n"
         "- rc_throttle(throttle_pct): -100 = full reverse, 0 = stop, +100 = full forward. "
         "When the user says \"前进50%%\" or \"后退30%%\" or \"停车\", use this tool.\n"
-        "- steer_reversed / throttle_reversed: Set to true to flip the direction if the servo or motor is wired opposite. Instead of swapping min/max pulse values, just toggle these booleans.\n"
+        "- Direction calibration (e.g., if servo is wired opposite) is handled automatically by the device firmware. You do NOT need to adjust your steer_pct or throttle_pct values.\n"
         "- Configuration is loaded from " MIMI_SPIFFS_BASE "/config/rc.json (GPIO pins and pulse calibration). "
         "If steering or throttle behaves incorrectly, check or update that file.\n"
         "- For smooth driving, create a script with rc_steer + rc_throttle steps and delays, then script_run.\n\n"
