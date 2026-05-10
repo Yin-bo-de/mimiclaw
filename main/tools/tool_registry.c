@@ -17,7 +17,7 @@
 
 static const char *TAG = "tools";
 
-#define MAX_TOOLS 32
+#define MAX_TOOLS 33
 
 static mimi_tool_t s_tools[MAX_TOOLS];
 static int s_tool_count = 0;
@@ -433,6 +433,19 @@ esp_err_t tool_registry_init(void)
         .execute = tool_imu_test_execute,
     };
     register_tool(&it);
+
+    mimi_tool_t gpt = {
+        .name = "gps_test",
+        .description = "Test GPS (NEO-6M) sensor readings. Leave input empty for 10 readings.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"continuous\":{\"type\":\"boolean\",\"description\":\"Run continuously\"},"
+            "\"count\":{\"type\":\"integer\",\"description\":\"Number of measurements\"},"
+            "\"delay_ms\":{\"type\":\"integer\",\"description\":\"Delay between measurements\"}},"
+            "\"required\":[]}",
+        .execute = tool_gps_test_execute,
+    };
+    register_tool(&gpt);
 
     build_tools_json();
 

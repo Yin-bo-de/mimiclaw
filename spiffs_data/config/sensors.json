@@ -11,5 +11,8 @@
     "i2c_port": 0, "sda_gpio": 8, "scl_gpio": 9,
     "address": "0x68", "freq_hz": 400000, "sample_hz": 100,
     "gyro_bias_dps": [0.0, 0.0, 0.0]
+  },
+  "gps": {
+    "uart_port": 1, "rx_gpio": 17, "tx_gpio": 18, "baudrate": 9600
   }
 }

@@ -31,8 +31,15 @@ static const char *TAG = "sensor_config";
 #define IMU_FREQ_HZ_DEF          400000
 #define IMU_SAMPLE_HZ_DEF        100
 
+/* Defaults for NEO-6M GPS */
+#define GPS_UART_PORT_DEF        1
+#define GPS_RX_GPIO_DEF          17
+#define GPS_TX_GPIO_DEF          18
+#define GPS_BAUDRATE_DEF         9600
+
 static ultrasonic_config_t s_ultrasonic;
 static imu_config_t s_imu;
+static gps_config_t s_gps;
 static bool s_initialized = false;
 
 static void ultrasonic_load_defaults(void)
@@ -62,10 +69,20 @@ static void imu_load_defaults(void)
     s_imu.loaded = false;
 }
 
+static void gps_load_defaults(void)
+{
+    s_gps.uart_port = GPS_UART_PORT_DEF;
+    s_gps.rx_gpio = GPS_RX_GPIO_DEF;
+    s_gps.tx_gpio = GPS_TX_GPIO_DEF;
+    s_gps.baudrate = GPS_BAUDRATE_DEF;
+    s_gps.loaded = false;
+}
+
 esp_err_t sensor_config_load(void)
 {
     ultrasonic_load_defaults();
     imu_load_defaults();
+    gps_load_defaults();
 
     FILE *f = fopen(SENSORS_CONFIG_PATH, "r");
     if (!f) {
@@ -152,9 +169,23 @@ esp_err_t sensor_config_load(void)
         }
     }
 
+    cJSON *gps = cJSON_GetObjectItem(root, "gps");
+    if (gps) {
+        cJSON *v;
+        v = cJSON_GetObjectItem(gps, "uart_port");
+        if (cJSON_IsNumber(v)) s_gps.uart_port = v->valueint;
+        v = cJSON_GetObjectItem(gps, "rx_gpio");
+        if (cJSON_IsNumber(v)) s_gps.rx_gpio = v->valueint;
+        v = cJSON_GetObjectItem(gps, "tx_gpio");
+        if (cJSON_IsNumber(v)) s_gps.tx_gpio = v->valueint;
+        v = cJSON_GetObjectItem(gps, "baudrate");
+        if (cJSON_IsNumber(v)) s_gps.baudrate = v->valueint;
+    }
+
     cJSON_Delete(root);
     s_ultrasonic.loaded = true;
     s_imu.loaded = true;
+    s_gps.loaded = true;
     ESP_LOGI(TAG, "Ultrasonic config loaded: L(GPIO%d/%d F(GPIO%d/%d) R(GPIO%d/%d) max=%dcm gap=%dms",
              s_ultrasonic.left.trig_gpio, s_ultrasonic.left.echo_gpio,
              s_ultrasonic.front.trig_gpio, s_ultrasonic.front.echo_gpio,
@@ -163,6 +194,8 @@ esp_err_t sensor_config_load(void)
     ESP_LOGI(TAG, "IMU config loaded: I2C%d SDA=GPIO%d SCL=GPIO%d addr=0x%02x freq=%dHz sample=%dHz",
              s_imu.i2c_port, s_imu.sda_gpio, s_imu.scl_gpio, s_imu.address,
              s_imu.freq_hz, s_imu.sample_hz);
+    ESP_LOGI(TAG, "GPS config loaded: UART%d RX=GPIO%d TX=GPIO%d baud=%d",
+             s_gps.uart_port, s_gps.rx_gpio, s_gps.tx_gpio, s_gps.baudrate);
     return ESP_OK;
 }
 
@@ -176,11 +209,17 @@ const imu_config_t *sensor_config_get_imu(void)
     return &s_imu;
 }
 
+const gps_config_t *sensor_config_get_gps(void)
+{
+    return &s_gps;
+}
+
 esp_err_t sensor_config_init(void)
 {
     if (!s_initialized) {
         ultrasonic_load_defaults();
         imu_load_defaults();
+        gps_load_defaults();
         sensor_config_load();
         s_initialized = true;
         ESP_LOGI(TAG, "sensor config initialized");

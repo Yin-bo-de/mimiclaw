@@ -157,6 +157,78 @@ idf.py -p /dev/cu.usbmodem21201 flash monitor
 - I2C SDA: GPIO 8
 - I2C SCL: GPIO 9
 
-### Phase 3: NEO-6M GPS 驱动 (待开始)
+### Phase 3: NEO-6M GPS 驱动 (已完成) ✅
+
+**完成状态：** 100%
+**完成时间：** 2026-05-10
+
+**已实现的功能：**
+
+1. **传感器配置管理**
+   - 在 `drivers/sensor_config.h` 中新增 `gps_config_t` 结构体
+   - 在 `drivers/sensor_config.c` 中新增 `gps_load_defaults()` 函数
+   - 从 `/spiffs/config/sensors.json` 读取 GPS 配置
+   - 支持配置：UART 端口、RX/TX 引脚、波特率
+   - 默认配置：UART1, RX=GPIO17, TX=GPIO18, 9600bps
+
+2. **NEO-6M GPS 驱动**
+   - 新增 `drivers/driver_gps.h` - 驱动接口
+   - 新增 `drivers/driver_gps.c` - 驱动实现
+   - 使用 ESP-IDF UART 驱动进行通信
+   - 实现 NMEA 0183 GPRMC/GPGGA 句子解析（手写最小解析器）
+   - 支持 GPS 定位数据获取（纬度、经度、高度、速度、航向、卫星数量）
+   - 实现后台 FreeRTOS 任务（Core 0, 优先级 4）
+   - 支持数据有效性检查和 stale 检测
+
+3. **工具层封装**
+   - 在 `tools/tool_sensors.h` 中新增 `tool_gps_test_execute()` 声明
+   - 在 `tools/tool_sensors.c` 中实现 `tool_gps_test_execute()` 函数
+   - 新增 `gps_test` 工具（支持 CLI 调用）
+   - 支持连续测试模式、自定义采样数和延迟
+
+4. **CLI 命令**
+   - 在 `cli/serial_cli.c` 中新增 `gps_test` 命令
+   - 支持参数：
+     - `-c <n>`：采样数量（默认 10）
+     - `-d <ms>`：采样间隔（默认 1000）
+   - 显示格式：Lat/Lon/Alt/Speed/Course/Sats/V/Age
+
+5. **构建系统更新**
+   - 修改 `main/CMakeLists.txt`
+     - 新增 `drivers/driver_gps.c`
+     - 添加 `esp_driver_uart` 到 REQUIRES 依赖
+
+6. **工具注册表更新**
+   - 修改 `tools/tool_registry.c`
+     - `MAX_TOOLS` 从 32 增加到 33
+     - 在 `tool_registry_init()` 中注册 `gps_test` 工具
+
+7. **配置文件更新**
+   - 修改 `spiffs_data/config/sensors.json`
+     - 新增 GPS 配置段：uart_port, rx_gpio, tx_gpio, baudrate
+
+**测试命令：**
+```bash
+# 读取当前目录
+gps_test              # 默认 10 次采样，间隔 1 秒
+gps_test -c 20       # 20 次采样
+gps_test -d 500      # 500ms 间隔
+gps_test -c 5 -d 300 # 5 次采样，300ms 间隔
+```
+
+**构建命令：**
+```bash
+cd /Users/yinbo/AI_Project/mimiclaw
+idf.py build
+idf.py -p /dev/cu.usbmodem21201 flash monitor
+```
+
+**引脚分配：**
+- GPS RX (GPS TX)：GPIO17
+- GPS TX (GPS RX)：GPIO18
+- UART 端口：UART1
+- 波特率：9600
+
+### Phase 4: 导航系统集成 (待开始)
 
 ### Phase 4: 导航系统集成 (待开始)

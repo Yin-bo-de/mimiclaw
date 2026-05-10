@@ -35,11 +35,23 @@ typedef struct {
     bool loaded;
 } imu_config_t;
 
+/* GPS (NEO-6M) config */
+typedef struct {
+    int uart_port;
+    int rx_gpio;
+    int tx_gpio;
+    int baudrate;
+    bool loaded;
+} gps_config_t;
+
 /* Get ultrasonic config */
 const ultrasonic_config_t *sensor_config_get_ultrasonic(void);
 
 /* Get IMU config */
 const imu_config_t *sensor_config_get_imu(void);
+
+/* Get GPS config */
+const gps_config_t *sensor_config_get_gps(void);
 
 /* Load sensors.json config from SPIFFS */
 esp_err_t sensor_config_load(void);

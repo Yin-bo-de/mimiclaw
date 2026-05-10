@@ -14,6 +14,7 @@
 #include "tools/tool_sensors.h"
 #include "drivers/driver_ultrasonic.h"
 #include "drivers/driver_imu.h"
+#include "drivers/driver_gps.h"
 #include "cron/cron_service.h"
 #include "heartbeat/heartbeat.h"
 #include "skills/skill_loader.h"
@@ -763,6 +764,53 @@ static int cmd_imu_test(int argc, char **argv)
     return 0;
 }
 
+/* --- gps_test command --- */
+static struct {
+    struct arg_int *count;
+    struct arg_int *delay_ms;
+    struct arg_end *end;
+} gps_test_args;
+
+static int cmd_gps_test(int argc, char **argv)
+{
+    int count = 10;
+    int delay_ms = 1000;
+
+    if (argc > 1) {
+        int nerrors = arg_parse(argc, argv, (void **)&gps_test_args);
+        if (nerrors == 0) {
+            if (gps_test_args.count->count > 0) {
+                count = (int)gps_test_args.count->ival[0];
+            }
+            if (gps_test_args.delay_ms->count > 0) {
+                delay_ms = (int)gps_test_args.delay_ms->ival[0];
+            }
+        } else {
+            arg_print_errors(stderr, gps_test_args.end, argv[0]);
+        }
+    }
+
+    printf("NEO-6M GPS Test - %d samples, %dms delay\n", count, delay_ms);
+
+    for (int i = 0; i < count; i++) {
+        gps_reading_t reading = driver_gps_get_reading();
+
+        printf("%03d: Lat=%9.6f°, Lon=%9.6f°, Alt=%6.1fm, Speed=%5.1fm/s, Course=%6.1f°  [Sats=%2d]  [V:%d]  Age=%lldms\n",
+               i + 1,
+               reading.latitude, reading.longitude,
+               reading.altitude_m, reading.speed_mps, reading.course_deg,
+               reading.satellites,
+               reading.fix_valid ? 1 : 0,
+               (long long)((esp_timer_get_time() - reading.timestamp_us) / 1000));
+
+        if (i < count - 1) {
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        }
+    }
+
+    return 0;
+}
+
 /* --- cron_start command --- */
 static int cmd_cron_start(int argc, char **argv)
 {
@@ -1336,6 +1384,18 @@ esp_err_t serial_cli_init(void)
         .argtable = &imu_test_args,
     };
     esp_console_cmd_register(&imu_test_cmd);
+
+    /* gps_test */
+    gps_test_args.count = arg_int0("c", "count", "<n>", "Number of samples (default: 10)");
+    gps_test_args.delay_ms = arg_int0("d", "delay", "<ms>", "Delay between samples in ms (default: 1000)");
+    gps_test_args.end = arg_end(2);
+    esp_console_cmd_t gps_test_cmd = {
+        .command = "gps_test",
+        .help = "Test NEO-6M GPS sensor readings: gps_test [-c <n>] [-d <ms>]",
+        .func = &cmd_gps_test,
+        .argtable = &gps_test_args,
+    };
+    esp_console_cmd_register(&gps_test_cmd);
 
     /* tool_exec */
     esp_console_cmd_t tool_exec_cmd = {
