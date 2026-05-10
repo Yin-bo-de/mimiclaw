@@ -1,5 +1,6 @@
 #include "drivers/driver_ultrasonic.h"
 #include "drivers/sensor_config.h"
+#include "nav/nav_situation.h"
 
 #include "mimi_config.h"
 #include "tools/gpio_policy.h"
@@ -109,6 +110,14 @@ static void ultrasonic_task(void *arg)
 
             vTaskDelay(pdMS_TO_TICKS(loop_delay));
         }
+
+        /* Publish all three channels to nav_situation after each round */
+        ultrasonic_reading_t left, front, right;
+        driver_ultrasonic_get_all(&left, &front, &right);
+        nav_situation_update_distances(
+            left.distance_cm, front.distance_cm, right.distance_cm,
+            left.valid, front.valid, right.valid
+        );
     }
 
     vTaskDelete(NULL);

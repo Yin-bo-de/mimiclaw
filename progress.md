@@ -585,3 +585,40 @@ imu_test -c 60 -d 1000
 **产出文件清单：**
 - 修改：`main/drivers/sensor_config.h` `main/drivers/sensor_config.c` `main/drivers/driver_imu.c` `main/cli/serial_cli.c`
 - 新增：`test_plan.md`（各 Phase 完整测试指南含 CLI 命令速查表）
+
+---
+
+## Phase 4 集成断点修复 (2026-05-10)
+
+**测试场景：** `tool_exec nav_status {}` 返回 IMU 全 0
+**测试数据：**
+```json
+{"state":"IDLE","l2_state":"IDLE","has_goal":false,
+ "gps":{"lat":0,"lon":0,"fix":false,"sats":0},
+ "distances":{"left_cm":400,"front_cm":400,"right_cm":400},
+ "imu":{"yaw":0,"roll":0,"pitch":0}}
+```
+
+**根因分析：**
+`nav_situation_t` 是 L1/L2/工具层的单一态势源，但三个传感器驱动（imu/ultrasonic/gps）**从未调用 `nav_situation_update_*()`**。数据流在驱动层和导航层之间完全断裂，导致：
+1. `nav_status` 永远读到初始化默认值（imu=0, distances=400）
+2. L1 反射层读到的 distances 永远是 400cm，紧急停车永远不会触发
+3. L2 FSM 读到的 IMU/GPS 全为零，导航决策无法工作
+
+**修复内容：**
+
+| 文件 | 修改 |
+|------|------|
+| `driver_imu.c` | `#include "nav/nav_situation.h"`；`imu_update()` 末尾调用 `nav_situation_update_imu(s_roll, s_pitch, s_yaw, gz)` |
+| `driver_ultrasonic.c` | `#include "nav/nav_situation.h"`；每轮轮询后 `driver_ultrasonic_get_all()` + `nav_situation_update_distances()` |
+| `driver_gps.c` | `#include "nav/nav_situation.h"`；`parse_gprmc()` 和 `parse_gpgga()` 后各调用 `nav_situation_update_gps()` |
+
+**验证方法：**
+```bash
+tool_exec nav_status {}
+# 预期：imu.yaw/roll/pitch 与 imu_test 读数一致（非 0）
+# distances 反映真实障碍物距离（非固定 400）
+```
+
+**产出文件清单：**
+- 修改：`main/drivers/driver_imu.c` `main/drivers/driver_ultrasonic.c` `main/drivers/driver_gps.c`

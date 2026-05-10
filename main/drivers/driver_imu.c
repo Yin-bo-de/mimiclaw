@@ -1,5 +1,6 @@
 #include "drivers/driver_imu.h"
 #include "drivers/sensor_config.h"
+#include "nav/nav_situation.h"
 #include "mimi_config.h"
 #include "tools/gpio_policy.h"
 
@@ -258,6 +259,9 @@ static void imu_update(const imu_config_t *config, int16_t *accel_raw, int16_t *
         s_latest_reading.valid = true;
         xSemaphoreGive(s_mutex);
     }
+
+    /* Feed into nav_situation for L1/L2 consumption */
+    nav_situation_update_imu(s_roll, s_pitch, s_yaw, gz);
 }
 
 /* Background measurement task */

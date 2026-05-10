@@ -1,5 +1,6 @@
 #include "driver_gps.h"
 #include "sensor_config.h"
+#include "nav/nav_situation.h"
 #include "tools/gpio_policy.h"
 #include "mimi_config.h"
 
@@ -143,6 +144,12 @@ static void parse_gprmc(char *line)
         s_reading.timestamp_us = esp_timer_get_time();
         xSemaphoreGive(s_reading_mutex);
     }
+
+    nav_situation_update_gps(
+        s_reading.latitude, s_reading.longitude,
+        s_reading.fix_valid, s_reading.satellites,
+        s_reading.speed_mps, s_reading.course_deg
+    );
 }
 
 /* Parse GPGGA sentence */
@@ -174,6 +181,12 @@ static void parse_gpgga(char *line)
         s_reading.timestamp_us = esp_timer_get_time();
         xSemaphoreGive(s_reading_mutex);
     }
+
+    nav_situation_update_gps(
+        s_reading.latitude, s_reading.longitude,
+        s_reading.fix_valid, s_reading.satellites,
+        s_reading.speed_mps, s_reading.course_deg
+    );
 }
 
 /* Process a complete NMEA line */
