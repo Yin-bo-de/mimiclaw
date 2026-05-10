@@ -656,3 +656,23 @@ esp_err_t tool_registry_execute(const char *name, const char *input_json,
     snprintf(output, output_size, "Error: unknown tool '%s'", name);
     return ESP_ERR_NOT_FOUND;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Per-turn message origin (set by agent_loop, read by tool_nav)       */
+/* ------------------------------------------------------------------ */
+
+static tool_msg_origin_t s_current_origin = {0};
+
+void tool_registry_set_origin(const char *channel, const char *chat_id)
+{
+    strncpy(s_current_origin.channel, channel ? channel : "",
+            sizeof(s_current_origin.channel) - 1);
+    strncpy(s_current_origin.chat_id, chat_id  ? chat_id  : "",
+            sizeof(s_current_origin.chat_id)  - 1);
+}
+
+void tool_registry_get_origin(tool_msg_origin_t *out)
+{
+    if (!out) return;
+    *out = s_current_origin;
+}

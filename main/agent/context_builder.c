@@ -155,6 +155,9 @@ esp_err_t context_build_system_prompt(char *buf, size_t size)
             skills_buf);
     }
 
+    /* Navigation playbook — injected when present so LLM knows how to handle NAV events */
+    off = append_file(buf, size, off, MIMI_NAV_PLAYBOOK_FILE, "Navigation Playbook");
+
     ESP_LOGI(TAG, "System prompt built: %d bytes", (int)off);
     return ESP_OK;
 }

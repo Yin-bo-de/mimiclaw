@@ -219,3 +219,4 @@
 /* Navigation — SPIFFS config paths */
 #define MIMI_NAV_PARAMS_FILE      MIMI_SPIFFS_CONFIG_DIR "/nav.json"
 #define MIMI_NAV_WAYPOINTS_FILE   MIMI_SPIFFS_CONFIG_DIR "/waypoints.json"
+#define MIMI_NAV_PLAYBOOK_FILE    MIMI_SPIFFS_CONFIG_DIR "/NAV_PLAYBOOK.md"

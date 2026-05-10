@@ -191,6 +191,9 @@ static void agent_loop_task(void *arg)
 
         ESP_LOGI(TAG, "Processing message from %s:%s", msg.channel, msg.chat_id);
 
+        /* Record origin so nav_goto tools can route escalate events back to caller */
+        tool_registry_set_origin(msg.channel, msg.chat_id);
+
         /* 1. Build system prompt */
         context_build_system_prompt(system_prompt, MIMI_CONTEXT_BUF_SIZE);
         append_turn_context_prompt(system_prompt, MIMI_CONTEXT_BUF_SIZE, &msg);

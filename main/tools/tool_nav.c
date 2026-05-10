@@ -5,6 +5,7 @@
 #include "nav/nav_planner.h"
 #include "nav/nav_controller.h"
 #include "nav/nav_l2_fsm.h"
+#include "nav/nav_escalate.h"
 #include "drivers/driver_gps.h"
 #include "tools/tool_pwm.h"
 #include "tools/tool_registry.h"
@@ -259,6 +260,11 @@ esp_err_t tool_nav_goto_execute(const char *input_json, char *output, size_t out
     }
     if (speed_pct < 1 || speed_pct > 100) speed_pct = 35;
 
+    /* Propagate caller identity so escalate events route back to this user */
+    tool_msg_origin_t origin;
+    tool_registry_get_origin(&origin);
+    nav_escalate_set_origin(origin.channel, origin.chat_id);
+
     esp_err_t err = nav_controller_set_goal(lat, lon, "custom", speed_pct);
     if (err != ESP_OK) {
         snprintf(output, output_size, "{\"error\":\"Failed to set goal: %s\"}",
@@ -294,6 +300,11 @@ esp_err_t tool_nav_goto_waypoint_execute(const char *input_json, char *output, s
         return ESP_ERR_INVALID_ARG;
     }
     if (speed_pct < 1 || speed_pct > 100) speed_pct = 35;
+
+    /* Propagate caller identity so escalate events route back to this user */
+    tool_msg_origin_t origin;
+    tool_registry_get_origin(&origin);
+    nav_escalate_set_origin(origin.channel, origin.chat_id);
 
     esp_err_t err = nav_controller_set_goal_by_waypoint(name, speed_pct);
     if (err == ESP_ERR_NOT_FOUND) {

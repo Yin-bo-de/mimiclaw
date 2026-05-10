@@ -435,4 +435,72 @@ nav_resume  # 自动恢复
 - 新增：`main/nav/nav_memory.{h,c}` `nav_l2_fsm.{h,c}`
 - 修改：`main/nav/nav_controller.{h,c}` `main/tools/tool_nav.{h,c}` `main/tools/tool_registry.c` `main/CMakeLists.txt`
 
-### Phase 7: escalate 事件管线 (待开始)
+### Phase 7: escalate 事件管线 (已完成) ✅
+
+**完成状态：** 100%
+**完成时间：** 2026-05-10
+
+**已实现的功能：**
+
+1. **escalate 核心模块 (`nav/nav_escalate.{h,c}`)**
+   - 定义 `escalate_kind_t`：ESC_STUCK / ESC_OSCILLATING / ESC_NO_PATH / ESC_LOST / ESC_GOAL_UNREACHABLE / ESC_ARRIVED / ESC_ABORTED
+   - `nav_escalate_init()` — 初始化冷却计时器和内部状态
+   - `nav_escalate_set_origin(channel, chat_id)` — 记录本次导航会话的来源
+   - 终态事件（无冷却）：`nav_escalate_arrived()` / `nav_escalate_aborted()`
+   - 异常事件（60s 冷却）：`nav_escalate_no_path()`
+   - 周期检测：`nav_escalate_run_periodic()` — STUCK / OSCILLATING / LOST / GOAL_UNREACHABLE
+   - 振荡追踪：`nav_escalate_notify_avoid_entry(side)` — 记录每次 AVOID 方向进入
+   - 所有事件通过 `message_bus_push_inbound()` 投递到 agent，携带 origin + JSON payload + hint
+
+2. **Origin 透传机制**
+   - `tool_registry.h` — 新增 `tool_msg_origin_t` 结构体和 `set_origin/get_origin` 函数
+   - `tool_registry.c` — 全局 `s_current_origin` 存储（agent_loop 单任务，无竞态）
+   - `agent_loop.c` — 每条消息处理开始时调用 `tool_registry_set_origin(msg.channel, msg.chat_id)`
+   - `tool_nav.c` — `nav_goto` / `nav_goto_waypoint` 读取 origin 后调用 `nav_escalate_set_origin()`，确保 escalate 事件精确回到发起人
+
+3. **L2 FSM 接入 escalate**
+   - `nav_l2_fsm.c` — 新增 `s_trip_start_us` 记录行程开始时间（用于 ARRIVED 事件的用时计算）
+   - ARRIVED：在 `fsm_cruise` 中到达判断后调用 `nav_escalate_arrived(sit, duration_s, dist, avoid_count)`
+   - NO_PATH：在 `enter_state` 中 replan_count > 3 时调用 `nav_escalate_no_path(&tmp_sit)`
+   - ABORTED（user_abort）：在 `L2_CMD_ABORT` 处理中计算剩余距离后调用 `nav_escalate_aborted()`
+   - ABORTED（sensors_lost）：在传感器 stale 检测 FAULT 时调用 `nav_escalate_aborted(&sit, "sensors_lost", 0.0)`
+   - 振荡通知：`enter_state` 中进入 AVOID_LEFT/RIGHT 时调用 `nav_escalate_notify_avoid_entry(side)`
+   - 周期检测：每 L2 tick 末尾（活跃导航状态时）调用 `nav_escalate_run_periodic()`
+
+4. **Context Builder 注入 NAV_PLAYBOOK**
+   - `context_builder.c` — 在系统 prompt 末尾 `append_file(MIMI_NAV_PLAYBOOK_FILE)`
+   - `mimi_config.h` — 新增 `MIMI_NAV_PLAYBOOK_FILE` 路径常量
+   - `spiffs_data/config/NAV_PLAYBOOK.md` — 7 种事件类型的 LLM 决策手册（自然语言回复模板 + 工具调用策略）
+
+5. **构建系统更新**
+   - `CMakeLists.txt` — 新增 `nav/nav_escalate.c`
+   - 编译结果：零警告零错误，固件 1.33 MB（Flash 剩余 37%）
+
+**验收测试方法：**
+```
+# 测试 1：正常到达
+nav_goto_waypoint {"name":"测试点"}
+# 小车导航到达 → Telegram 自动收到 "✅ 已到达测试点..." 类回复
+
+# 测试 2：主动取消
+# 导航行驶中，在 Telegram 说 "停下" → LLM 调 nav_abort
+# → Telegram 收到 "已停止..." 回复
+
+# 测试 3：异常事件（STUCK）
+# 故意阻止小车移动 > 10 秒 → STUCK 事件触发 → agent 介入
+# → 60s 冷却内再次触发不重复上报
+
+# 测试 4：Origin 验证
+# Telegram 发起导航 → Telegram 收到 escalate 事件（不会发到 Feishu）
+```
+
+**引脚分配（继承前序 Phase）：**
+- 超声波：L(TRIG=10,ECHO=12) F(TRIG=13,ECHO=14) R(TRIG=15,ECHO=16)
+- IMU I2C：SDA=8, SCL=9
+- GPS UART1：RX=17, TX=18
+- 电机 ESC：GPIO 21，舵机：GPIO 11
+
+**产出文件清单：**
+- 新增：`main/nav/nav_escalate.{h,c}` `spiffs_data/config/NAV_PLAYBOOK.md`
+- 修改：`main/tools/tool_registry.{h,c}` `main/agent/agent_loop.c` `main/tools/tool_nav.c`
+         `main/nav/nav_l2_fsm.c` `main/mimi_config.h` `main/agent/context_builder.c` `main/CMakeLists.txt`

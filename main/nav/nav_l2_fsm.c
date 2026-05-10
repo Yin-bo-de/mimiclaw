@@ -4,6 +4,7 @@
 #include "nav/nav_config.h"
 #include "nav/nav_planner.h"
 #include "nav/nav_l1_reflex.h"
+#include "nav/nav_escalate.h"
 #include "tools/tool_pwm.h"
 #include "mimi_config.h"
 
@@ -44,9 +45,10 @@ static int   s_avoid_count   = 0;
 static int   s_replan_count  = 0;
 static int   s_cruise_speed  = 35; /* overridden by nav_l2_start */
 
-static double s_goal_lat  = 0.0;
-static double s_goal_lon  = 0.0;
-static char   s_goal_name[64] = {0};
+static double  s_goal_lat  = 0.0;
+static double  s_goal_lon  = 0.0;
+static char    s_goal_name[64] = {0};
+static int64_t s_trip_start_us = 0; /* set when trip begins, used by ARRIVED escalate */
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                             */
@@ -160,13 +162,18 @@ static void enter_state(l2_state_t new_state)
         s_replan_count++;
         if (s_replan_count > 3) {
             ESP_LOGW(TAG, "NO_PATH: replan_count=%d — entering FAULT", s_replan_count);
-            /* Phase 7: escalate ESC_NO_PATH here */
+            nav_situation_t tmp_sit;
+            nav_situation_get(&tmp_sit);
+            nav_escalate_no_path(&tmp_sit);
             new_state = L2_FAULT;
         }
     }
 
     if (new_state != cur) {
         ESP_LOGI(TAG, "%s → %s", nav_l2_state_name(cur), nav_l2_state_name(new_state));
+        /* Notify escalate so it can track oscillation */
+        if (new_state == L2_AVOID_LEFT)  nav_escalate_notify_avoid_entry(0);
+        if (new_state == L2_AVOID_RIGHT) nav_escalate_notify_avoid_entry(1);
     }
     s_state          = new_state;
     s_state_enter_us = esp_timer_get_time();
@@ -183,11 +190,13 @@ static void fsm_cruise(const nav_situation_t *sit, const nav_config_t *cfg)
         double dist = nav_planner_distance_m(sit->lat, sit->lon,
                                               s_goal_lat, s_goal_lon);
         if (dist <= (double)cfg->arrival_radius_m) {
+            int64_t duration_s = (esp_timer_get_time() - s_trip_start_us) / 1000000LL;
+            nav_escalate_arrived(sit, duration_s, dist, s_avoid_count);
             enter_state(L2_ARRIVED);
             rc_nav_throttle(0);
             rc_nav_steer(0);
-            /* Phase 7: escalate ESC_ARRIVED here */
-            ESP_LOGI(TAG, "ARRIVED at '%s' (dist=%.2f m)", s_goal_name, dist);
+            ESP_LOGI(TAG, "ARRIVED at '%s' (dist=%.2f m, dur=%llds)",
+                     s_goal_name, dist, (long long)duration_s);
             return;
         }
     }
@@ -348,12 +357,18 @@ static void l2_task(void *arg)
                     enter_state(s_prev_state);
                 }
                 break;
-            case L2_CMD_ABORT:
+            case L2_CMD_ABORT: {
+                double dist_rem = 0.0;
+                if (sit.gps_fix && sit.has_goal) {
+                    dist_rem = nav_planner_distance_m(sit.lat, sit.lon,
+                                                      s_goal_lat, s_goal_lon);
+                }
+                nav_escalate_aborted(&sit, "user_abort", dist_rem);
                 enter_state(L2_FAULT);
                 rc_nav_throttle(0);
                 rc_nav_steer(0);
-                /* Phase 7: escalate ESC_ABORTED here */
                 break;
+            }
             case L2_CMD_NEW_GOAL:
                 s_avoid_count  = 0;
                 s_replan_count = 0;
@@ -370,6 +385,7 @@ static void l2_task(void *arg)
             s_state != L2_FAULT) {
             if (!sensors_ok(&sit)) {
                 ESP_LOGE(TAG, "Sensor stale — FAULT");
+                nav_escalate_aborted(&sit, "sensors_lost", 0.0);
                 enter_state(L2_FAULT);
                 rc_nav_throttle(0);
                 rc_nav_steer(0);
@@ -403,6 +419,15 @@ static void l2_task(void *arg)
             break;
         }
 
+        /* Periodic escalate detectors (run while actively navigating) */
+        if (s_state == L2_CRUISE   || s_state == L2_AVOID_LEFT  ||
+            s_state == L2_AVOID_RIGHT || s_state == L2_REVERSE  ||
+            s_state == L2_REPLAN) {
+            int avoid_side = (s_state == L2_AVOID_LEFT)  ? 0 :
+                             (s_state == L2_AVOID_RIGHT) ? 1 : -1;
+            nav_escalate_run_periodic(&sit, avoid_side, s_goal_lat, s_goal_lon);
+        }
+
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(MIMI_NAV_L2_PERIOD_MS));
     }
 
@@ -421,9 +446,11 @@ static void l2_task(void *arg)
 esp_err_t nav_l2_init(void)
 {
     nav_memory_init();
-    s_state   = L2_FAULT;
-    s_running = false;
-    s_cmd     = L2_CMD_NONE;
+    nav_escalate_init();
+    s_state         = L2_FAULT;
+    s_running       = false;
+    s_cmd           = L2_CMD_NONE;
+    s_trip_start_us = 0;
     ESP_LOGI(TAG, "nav_l2 initialized");
     return ESP_OK;
 }
@@ -435,9 +462,10 @@ esp_err_t nav_l2_start(double goal_lat, double goal_lon, const char *goal_name, 
         return ESP_ERR_INVALID_ARG;
     }
 
-    s_goal_lat    = goal_lat;
-    s_goal_lon    = goal_lon;
-    s_cruise_speed = speed_pct;
+    s_goal_lat      = goal_lat;
+    s_goal_lon      = goal_lon;
+    s_cruise_speed  = speed_pct;
+    s_trip_start_us = esp_timer_get_time();
     strncpy(s_goal_name, goal_name ? goal_name : "", sizeof(s_goal_name) - 1);
     s_goal_name[sizeof(s_goal_name) - 1] = '\0';
 
