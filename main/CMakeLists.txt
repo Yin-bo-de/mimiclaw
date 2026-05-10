@@ -39,6 +39,8 @@ idf_component_register(
         "nav/nav_config.c"
         "nav/nav_waypoints.c"
         "nav/nav_planner.c"
+        "nav/nav_l1_reflex.c"
+        "nav/nav_controller.c"
         "tools/tool_nav.c"
     INCLUDE_DIRS
         "."

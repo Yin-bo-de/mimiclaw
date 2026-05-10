@@ -417,3 +417,41 @@ esp_err_t tool_rc_throttle_execute(const char *input_json, char *output, size_t 
     cJSON_Delete(root);
     return err;
 }
+
+/* --- Internal nav API (bypasses JSON, reuses existing PWM + rc_config) --- */
+
+esp_err_t rc_nav_throttle(int pct)
+{
+    if (!s_rc.loaded) return ESP_ERR_INVALID_STATE;
+    if (pct < -100) pct = -100;
+    if (pct > 100) pct = 100;
+    if (s_rc.throttle_reversed) pct = -pct;
+    int pulse_us;
+    if (pct < 0) {
+        pulse_us = s_rc.throttle_neutral_us +
+            (int)((int64_t)(s_rc.throttle_reverse_us - s_rc.throttle_neutral_us) * (-pct) / 100);
+    } else {
+        pulse_us = s_rc.throttle_neutral_us +
+            (int)((int64_t)(s_rc.throttle_forward_us - s_rc.throttle_neutral_us) * pct / 100);
+    }
+    char buf[64];
+    return pwm_set_pulse(s_rc.throttle_gpio, pulse_us, buf, sizeof(buf));
+}
+
+esp_err_t rc_nav_steer(int pct)
+{
+    if (!s_rc.loaded) return ESP_ERR_INVALID_STATE;
+    if (pct < -100) pct = -100;
+    if (pct > 100) pct = 100;
+    if (s_rc.steer_reversed) pct = -pct;
+    int pulse_us;
+    if (pct < 0) {
+        pulse_us = s_rc.steer_center_us +
+            (int)((int64_t)(s_rc.steer_min_us - s_rc.steer_center_us) * (-pct) / 100);
+    } else {
+        pulse_us = s_rc.steer_center_us +
+            (int)((int64_t)(s_rc.steer_max_us - s_rc.steer_center_us) * pct / 100);
+    }
+    char buf[64];
+    return pwm_set_pulse(s_rc.steer_gpio, pulse_us, buf, sizeof(buf));
+}

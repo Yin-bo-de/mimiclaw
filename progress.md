@@ -300,4 +300,63 @@ nav_delete_waypoint {"name":"测试点"}  # 删除
 - 新增：`spiffs_data/config/nav.json` `waypoints.json`
 - 修改：`main/tools/tool_sensors.{h,c}` `tool_registry.c` `mimi_config.h` `CMakeLists.txt`
 
-### Phase 5: L1 反射层 (待开始)
+### Phase 5: L1 反射层 (已完成) ✅
+
+**完成状态：** 100%
+**完成时间：** 2026-05-10
+
+**已实现的功能：**
+
+1. **内部 RC 控制 API (`tools/tool_pwm.{h,c}`)**
+   - 新增 `rc_nav_throttle(int pct)` - 绕过 JSON 直接设置油门（-100..100%）
+   - 新增 `rc_nav_steer(int pct)` - 绕过 JSON 直接设置转向（-100..100%）
+   - 复用现有 rc_config 及 LEDC PWM 通道，无需重新初始化
+   - rc.json 未加载时返回 ESP_ERR_INVALID_STATE
+
+2. **L1 反射层 (`nav/nav_l1_reflex.{h,c}`)**
+   - 50 Hz FreeRTOS 任务（优先级 7，核心 1，栈 3KB）
+   - 每 20ms 读取 nav_situation_t，计算三路超声波最小有效距离
+   - 传感器数据 stale > 500ms 则视为无效（按无障碍处理，避免误停）
+   - `min_d < emergency_stop_cm`（默认 20cm）时：强制 throttle=0 并置 blocked=true
+   - 障碍清除时：置 blocked=false，高层任务自动恢复控制
+   - 暴露 `nav_l1_is_blocked()` 供 L2 / dummy drive 查询
+
+3. **导航控制器 (`nav/nav_controller.{h,c}`)**
+   - 顶层状态机：IDLE / RUNNING / PAUSED
+   - `nav_controller_init()` - 初始化 L1（不启动任务）
+   - `nav_controller_start()` - 启动 L1 反射任务
+   - `nav_controller_dummy_drive_start(speed_pct)` - Phase 5 测试钩子
+     - 以固定速度直行，每 100ms 检查 L1 blocked 状态
+     - L1（prio=7）抢占 dummy（prio=4），保证 < 20ms 内刹停
+   - `nav_controller_dummy_drive_stop()` - 安全停止测试
+
+4. **CLI 测试命令 (`cli/serial_cli.c`)**
+   - 新增 `l1_test` 命令
+   - `l1_test [-s <speed_pct>]`：以指定速度（默认 20%）启动 dummy drive
+   - `l1_test -x`：停止 dummy drive
+   - 提示用户障碍检测逻辑和操作指引
+
+5. **构建系统与启动序列**
+   - `CMakeLists.txt`：新增 `nav/nav_l1_reflex.c` + `nav/nav_controller.c`
+   - `mimi.c`：
+     - `nav_controller_init()` 在 `tool_registry_init()` 之后调用（WiFi 无关）
+     - `nav_controller_start()` 在 `ws_server_start()` 之后调用（WiFi 就绪后）
+
+**验收测试方法：**
+```bash
+# 在串口 CLI 中执行：
+l1_test -s 20       # 以 20% 速度启动 dummy drive
+# 将手或纸板移近任意超声波传感器 < 20cm
+# 观察：小车立即停止（< 50ms），移开后自动恢复前进
+l1_test -x          # 停止测试
+```
+
+**引脚分配（继承前序 Phase）：**
+- 超声波：L(TRIG=10,ECHO=12) F(TRIG=13,ECHO=14) R(TRIG=15,ECHO=16)
+- 电机 ESC：GPIO 21（throttle），舵机：GPIO 11（steer）
+
+**产出文件清单：**
+- 新增：`main/nav/nav_l1_reflex.{h,c}` `nav_controller.{h,c}`
+- 修改：`main/tools/tool_pwm.{h,c}` `main/mimi.c` `main/CMakeLists.txt` `main/cli/serial_cli.c`
+
+### Phase 6: L2 战术层 (待开始)

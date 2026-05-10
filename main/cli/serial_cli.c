@@ -15,6 +15,8 @@
 #include "drivers/driver_ultrasonic.h"
 #include "drivers/driver_imu.h"
 #include "drivers/driver_gps.h"
+#include "nav/nav_controller.h"
+#include "nav/nav_l1_reflex.h"
 #include "cron/cron_service.h"
 #include "heartbeat/heartbeat.h"
 #include "skills/skill_loader.h"
@@ -668,6 +670,53 @@ static int cmd_heartbeat_trigger(int argc, char **argv)
     } else {
         printf("Heartbeat: no actionable tasks found.\n");
     }
+    return 0;
+}
+
+/* --- l1_test command --- */
+static struct {
+    struct arg_int *speed;
+    struct arg_lit *stop;
+    struct arg_end *end;
+} l1_test_args;
+
+static int cmd_l1_test(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&l1_test_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, l1_test_args.end, argv[0]);
+        return 1;
+    }
+
+    if (l1_test_args.stop->count > 0) {
+        nav_controller_dummy_drive_stop();
+        printf("Dummy drive stopped\n");
+        return 0;
+    }
+
+    int speed = 20;
+    if (l1_test_args.speed->count > 0) {
+        speed = l1_test_args.speed->ival[0];
+        if (speed < 1 || speed > 100) {
+            printf("Error: speed must be 1..100\n");
+            return 1;
+        }
+    }
+
+    esp_err_t err = nav_controller_dummy_drive_start(speed);
+    if (err == ESP_ERR_INVALID_STATE) {
+        printf("Dummy drive already running. Use 'l1_test -x' to stop first.\n");
+        return 1;
+    }
+    if (err != ESP_OK) {
+        printf("Failed to start dummy drive: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+
+    printf("Dummy drive started at %d%%\n"
+           "  L1 will force-stop when any sensor < 20 cm\n"
+           "  Obstacle removed -> car resumes automatically\n"
+           "  Run 'l1_test -x' to stop\n", speed);
     return 0;
 }
 
@@ -1360,6 +1409,18 @@ esp_err_t serial_cli_init(void)
         .func = &cmd_cron_start,
     };
     esp_console_cmd_register(&cron_start_cmd);
+
+    /* l1_test */
+    l1_test_args.speed = arg_int0("s", "speed", "<pct>", "Forward speed %% (default: 20)");
+    l1_test_args.stop  = arg_lit0("x", "stop",           "Stop dummy drive");
+    l1_test_args.end   = arg_end(2);
+    esp_console_cmd_t l1_test_cmd = {
+        .command  = "l1_test",
+        .help     = "L1 reflex test: drive forward, auto-stop at obstacle. l1_test [-s <pct>] [-x]",
+        .func     = &cmd_l1_test,
+        .argtable = &l1_test_args,
+    };
+    esp_console_cmd_register(&l1_test_cmd);
 
     /* ultrasonic_test */
     ultrasonic_test_args.count = arg_int0("c", "count", "<n>", "Number of samples (default: 10)");

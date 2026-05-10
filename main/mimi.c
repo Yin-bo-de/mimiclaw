@@ -29,6 +29,7 @@
 #include "rule_engine/rule_engine.h"
 #include "skills/skill_loader.h"
 #include "onboard/wifi_onboard.h"
+#include "nav/nav_controller.h"
 
 static const char *TAG = "mimi";
 
@@ -141,6 +142,7 @@ void app_main(void)
     ESP_ERROR_CHECK(feishu_bot_init());
     ESP_ERROR_CHECK(llm_proxy_init());
     ESP_ERROR_CHECK(tool_registry_init());
+    ESP_ERROR_CHECK(nav_controller_init());
     ESP_ERROR_CHECK(cron_service_init());
     ESP_ERROR_CHECK(heartbeat_init());
     ESP_ERROR_CHECK(rule_engine_init());
@@ -194,6 +196,7 @@ void app_main(void)
         heartbeat_start();
         rule_engine_start();
         ESP_ERROR_CHECK(ws_server_start());
+        ESP_ERROR_CHECK(nav_controller_start());
 
         ESP_LOGI(TAG, "All services started!");
     }
