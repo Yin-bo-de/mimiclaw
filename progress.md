@@ -359,4 +359,80 @@ l1_test -x          # 停止测试
 - 新增：`main/nav/nav_l1_reflex.{h,c}` `nav_controller.{h,c}`
 - 修改：`main/tools/tool_pwm.{h,c}` `main/mimi.c` `main/CMakeLists.txt` `main/cli/serial_cli.c`
 
-### Phase 6: L2 战术层 (待开始)
+### Phase 6: L2 战术层 (已完成) ✅
+
+**完成状态：** 100%
+**完成时间：** 2026-05-10
+
+**已实现的功能：**
+
+1. **避障历史记忆 (`nav/nav_memory.{h,c}`)**
+   - 8 条环形缓冲 `avoid_record_t`（lat/lon/side/succeeded/d_front/ts_us/duration_ms）
+   - `nav_memory_record_attempt()` — 进入 AVOID 时记录
+   - `nav_memory_mark_last_result()` — 离开 AVOID 时标记成功/失败
+   - `nav_memory_penalty_for_side()` — Haversine 10m 范围内 failed/total 评分 [0.0, 1.0]
+
+2. **L2 战术层 FSM (`nav/nav_l2_fsm.{h,c}`)**
+   - 8 状态：CRUISE / AVOID_LEFT / AVOID_RIGHT / REVERSE / REPLAN / PAUSED / ARRIVED / FAULT
+   - 10 Hz FreeRTOS 任务（优先级 5，核心 1，栈 6KB）
+   - **CRUISE**：Haversine 到达判断 + 航向 PID（Kp×heading_error，clamp）+ 障碍触发评分
+   - **AVOID_LEFT/RIGHT**：满舵转向 + 前方 < emergency_reverse → REVERSE；clear → CRUISE；超时 → REPLAN
+   - **REVERSE**：直行倒车 + 超时 → REPLAN
+   - **REPLAN**：throttle=0，-100→+100→-100 扫描 replan_ms；发现 clear 侧 → AVOID_*；扫完仍堵 replan_count>3 → FAULT
+   - **PAUSED**：throttle=0 保持；resume 回 prev_state
+   - **ARRIVED / FAULT**：throttle=0，steer=0 终态（Phase 7 加 escalate）
+   - 评分函数：clearance_term + heading_term - memory_penalty
+   - 传感器 stale > 2s → FAULT，replan_count > 3 → FAULT（NO_PATH，Phase 7 escalate）
+   - 命令通道：volatile l2_cmd_t（PAUSE / RESUME / ABORT / NEW_GOAL）
+
+3. **导航控制器扩展 (`nav/nav_controller.{h,c}`)**
+   - `nav_controller_set_goal(lat, lon, name, speed_pct)` — 设置 situation goal + 启动 L2
+   - `nav_controller_set_goal_by_waypoint(name, speed_pct)` — 按名查 waypoint + 调上述
+   - `nav_controller_pause()` / `nav_controller_resume()` / `nav_controller_abort()`
+   - `nav_controller_get_l2_state_name()` — 返回 L2 FSM 状态字符串
+   - `nav_controller_init()` 同时初始化 L1 + L2
+
+4. **工具层补全 (`tools/tool_nav.{h,c}`)**
+   - `nav_goto` — 设置绝对 GPS 目标启动导航
+   - `nav_goto_waypoint` — 按名导航至 waypoint
+   - `nav_pause` / `nav_resume` — 暂停/恢复（保留 FSM 上下文）
+   - `nav_abort` — 终止导航回 IDLE
+   - `nav_manual_step` — 临时接管 ≤1000ms，L2 自动恢复；L1 守护仍生效
+   - `nav_status` — 更新返回 L2 FSM state + avoid/replan 计数 + bearing_deg
+
+5. **构建系统与注册**
+   - `CMakeLists.txt`：新增 `nav/nav_memory.c` + `nav/nav_l2_fsm.c`
+   - `tool_registry.c`：MAX_TOOLS 40 → 48，注册 6 个新工具
+   - 编译结果：零警告零错误，固件 1.3 MB（Flash 剩余 37%）
+
+**引脚分配（继承前序 Phase）：**
+- 超声波：L(TRIG=10,ECHO=12) F(TRIG=13,ECHO=14) R(TRIG=15,ECHO=16)
+- IMU I2C：SDA=8, SCL=9
+- GPS UART1：RX=17, TX=18
+- 电机 ESC：GPIO 21，舵机：GPIO 11
+
+**验收测试方法（分级）：**
+```
+# 验收 1：空旷场地 20m 直达
+nav_goto_waypoint {"name":"目标点"}  # 预先 nav_save_waypoint 存好
+# 观察：小车直行，到达后 nav_status 返回 l2_state=ARRIVED，最终距离 <3m
+
+# 验收 2：单障碍绕行
+# 在 5m 处放置障碍物，执行 nav_goto
+# 观察：CRUISE → AVOID_LEFT or AVOID_RIGHT → 绕开 → CRUISE → ARRIVED
+
+# 验收 3：墙角脱出
+# 靠近墙角，执行 nav_goto
+# 观察：AVOID → REVERSE → REPLAN → 找到 clear 侧 → 脱出无碰撞
+
+# 临时接管测试
+nav_pause
+nav_manual_step {"steer_pct":-100,"throttle_pct":-25,"hold_ms":800}
+nav_resume  # 自动恢复
+```
+
+**产出文件清单：**
+- 新增：`main/nav/nav_memory.{h,c}` `nav_l2_fsm.{h,c}`
+- 修改：`main/nav/nav_controller.{h,c}` `main/tools/tool_nav.{h,c}` `main/tools/tool_registry.c` `main/CMakeLists.txt`
+
+### Phase 7: escalate 事件管线 (待开始)

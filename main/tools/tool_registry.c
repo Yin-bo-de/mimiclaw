@@ -18,7 +18,7 @@
 
 static const char *TAG = "tools";
 
-#define MAX_TOOLS 40
+#define MAX_TOOLS 48
 
 static mimi_tool_t s_tools[MAX_TOOLS];
 static int s_tool_count = 0;
@@ -540,6 +540,96 @@ esp_err_t tool_registry_init(void)
         .execute = tool_nav_status_execute,
     };
     register_tool(&nst);
+
+    /* Phase 6: autonomous navigation control tools */
+    mimi_tool_t ng = {
+        .name = "nav_goto",
+        .description = "Start autonomous navigation to an absolute GPS coordinate. "
+            "The car will drive toward the target using GPS + IMU, avoiding obstacles. "
+            "Returns immediately — navigation runs in background. "
+            "You will be notified when the car arrives or encounters an unresolvable situation.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"lat\":{\"type\":\"number\",\"description\":\"Target latitude in decimal degrees\"},"
+            "\"lon\":{\"type\":\"number\",\"description\":\"Target longitude in decimal degrees\"},"
+            "\"speed_pct\":{\"type\":\"integer\",\"description\":\"Cruise speed percentage 1-100 (default 35)\"}"
+            "},"
+            "\"required\":[\"lat\",\"lon\"]}",
+        .execute = tool_nav_goto_execute,
+    };
+    register_tool(&ng);
+
+    mimi_tool_t ngw = {
+        .name = "nav_goto_waypoint",
+        .description = "Start autonomous navigation to a named waypoint. "
+            "The waypoint must have been saved with nav_save_waypoint. "
+            "Returns immediately — navigation runs in background.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"name\":{\"type\":\"string\",\"description\":\"Waypoint name (e.g. '快递柜')\"},"
+            "\"speed_pct\":{\"type\":\"integer\",\"description\":\"Cruise speed percentage 1-100 (default 35)\"}"
+            "},"
+            "\"required\":[\"name\"]}",
+        .execute = tool_nav_goto_waypoint_execute,
+    };
+    register_tool(&ngw);
+
+    mimi_tool_t npause = {
+        .name = "nav_pause",
+        .description = "Pause autonomous navigation (car stops). Call nav_resume to continue from where it paused. "
+            "Use before nav_manual_step to take temporary control.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_nav_pause_execute,
+    };
+    register_tool(&npause);
+
+    mimi_tool_t nresume = {
+        .name = "nav_resume",
+        .description = "Resume autonomous navigation after nav_pause. "
+            "Navigation continues from the same FSM state it was in before pausing.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_nav_resume_execute,
+    };
+    register_tool(&nresume);
+
+    mimi_tool_t nabort = {
+        .name = "nav_abort",
+        .description = "Abort the current navigation task immediately. Car stops. "
+            "Use when the situation is unsafe or the user wants to cancel. "
+            "Call nav_goto or nav_goto_waypoint to start a new task.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_nav_abort_execute,
+    };
+    register_tool(&nabort);
+
+    mimi_tool_t nms = {
+        .name = "nav_manual_step",
+        .description = "Temporarily override autonomous navigation with a direct motor command. "
+            "L2 is paused for hold_ms, then automatically resumes. "
+            "L1 emergency stop (< 20 cm) still applies during manual step. "
+            "Useful for nudging the car out of a stuck situation.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"steer_pct\":{\"type\":\"integer\",\"description\":\"Steering: -100 (full left) to 100 (full right)\"},"
+            "\"throttle_pct\":{\"type\":\"integer\",\"description\":\"Throttle: -100 (full reverse) to 100 (full forward)\"},"
+            "\"hold_ms\":{\"type\":\"integer\",\"description\":\"Duration in milliseconds, max 1000\"}"
+            "},"
+            "\"required\":[\"steer_pct\",\"throttle_pct\",\"hold_ms\"]}",
+        .execute = tool_nav_manual_step_execute,
+    };
+    register_tool(&nms);
 
     build_tools_json();
 
