@@ -214,6 +214,81 @@ const gps_config_t *sensor_config_get_gps(void)
     return &s_gps;
 }
 
+esp_err_t sensor_config_save_imu_bias(const float bias_dps[3])
+{
+    s_imu.gyro_bias_dps[0] = bias_dps[0];
+    s_imu.gyro_bias_dps[1] = bias_dps[1];
+    s_imu.gyro_bias_dps[2] = bias_dps[2];
+
+    FILE *f = fopen(SENSORS_CONFIG_PATH, "r");
+    if (!f) {
+        ESP_LOGW(TAG, "Cannot open sensors.json for reading, creating new");
+        cJSON *root = cJSON_CreateObject();
+        cJSON_AddNumberToObject(root, "version", 1);
+        cJSON *imu = cJSON_CreateObject();
+        cJSON_AddItemToObject(root, "imu", imu);
+        cJSON *bias = cJSON_CreateArray();
+        cJSON_AddItemToArray(bias, cJSON_CreateNumber(bias_dps[0]));
+        cJSON_AddItemToArray(bias, cJSON_CreateNumber(bias_dps[1]));
+        cJSON_AddItemToArray(bias, cJSON_CreateNumber(bias_dps[2]));
+        cJSON_AddItemToObject(imu, "gyro_bias_dps", bias);
+        char *out = cJSON_Print(root);
+        FILE *fw = fopen(SENSORS_CONFIG_PATH, "w");
+        if (fw) {
+            fputs(out, fw);
+            fclose(fw);
+        }
+        cJSON_free(out);
+        cJSON_Delete(root);
+        return ESP_OK;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = malloc(len + 1);
+    if (!buf) {
+        fclose(f);
+        return ESP_ERR_NO_MEM;
+    }
+    buf[fread(buf, 1, len, f)] = '\0';
+    fclose(f);
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    cJSON *imu = cJSON_GetObjectItem(root, "imu");
+    if (!imu) {
+        imu = cJSON_CreateObject();
+        cJSON_AddItemToObject(root, "imu", imu);
+    }
+
+    cJSON_DeleteItemFromObject(imu, "gyro_bias_dps");
+    cJSON *bias = cJSON_CreateArray();
+    cJSON_AddItemToArray(bias, cJSON_CreateNumber(bias_dps[0]));
+    cJSON_AddItemToArray(bias, cJSON_CreateNumber(bias_dps[1]));
+    cJSON_AddItemToArray(bias, cJSON_CreateNumber(bias_dps[2]));
+    cJSON_AddItemToObject(imu, "gyro_bias_dps", bias);
+
+    char *out = cJSON_Print(root);
+    cJSON_Delete(root);
+
+    FILE *fw = fopen(SENSORS_CONFIG_PATH, "w");
+    if (!fw) {
+        cJSON_free(out);
+        return ESP_ERR_INVALID_STATE;
+    }
+    fputs(out, fw);
+    fclose(fw);
+    cJSON_free(out);
+
+    ESP_LOGI(TAG, "IMU gyro bias saved: [%.4f, %.4f, %.4f] dps", bias_dps[0], bias_dps[1], bias_dps[2]);
+    return ESP_OK;
+}
+
 esp_err_t sensor_config_init(void)
 {
     if (!s_initialized) {

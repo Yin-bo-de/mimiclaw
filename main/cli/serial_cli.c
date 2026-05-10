@@ -813,6 +813,23 @@ static int cmd_imu_test(int argc, char **argv)
     return 0;
 }
 
+/* --- imu_calibrate command --- */
+static int cmd_imu_calibrate(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    printf("Starting IMU gyro calibration - keep board stationary for 5 seconds...\n");
+    esp_err_t err = driver_imu_calibrate_gyro();
+    if (err == ESP_OK) {
+        printf("Calibration complete. New bias saved to sensors.json.\n");
+        printf("Restart the device or run 'imu_test' to verify.\n");
+    } else {
+        printf("Calibration failed: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+    return 0;
+}
+
 /* --- gps_test command --- */
 static struct {
     struct arg_int *count;
@@ -1445,6 +1462,14 @@ esp_err_t serial_cli_init(void)
         .argtable = &imu_test_args,
     };
     esp_console_cmd_register(&imu_test_cmd);
+
+    /* imu_calibrate */
+    esp_console_cmd_t imu_calibrate_cmd = {
+        .command = "imu_calibrate",
+        .help = "Re-calibrate IMU gyro bias (5s stationary): imu_calibrate",
+        .func = &cmd_imu_calibrate,
+    };
+    esp_console_cmd_register(&imu_calibrate_cmd);
 
     /* gps_test */
     gps_test_args.count = arg_int0("c", "count", "<n>", "Number of samples (default: 10)");

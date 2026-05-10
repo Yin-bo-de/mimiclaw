@@ -549,3 +549,39 @@ nav_goto_waypoint {"name":"测试点"}
 **产出文件清单：**
 - 修改：`main/rule_engine/rule_engine.{h,c}` `main/tools/tool_rule.c` `main/tools/tool_registry.c`
 - 修改：`progress.md`
+
+---
+
+## Phase 2 测试与修复 (2026-05-10)
+
+**测试场景：** IMU 静止 60s yaw 漂移测试
+**测试命令：** `imu_test -c 60 -d 1000`
+**测试数据：**
+- 静态 Gyro z ≈ 0.5°/s（未校准）
+- Yaw 从 5764.3° 漂移到 5796.8°（60s 漂移 32.5°）
+- 远超目标 <15°/60s（实际 0.5°/s × 60s = 30°）
+
+**根因分析：**
+1. `driver_imu_start()` 从未调用 `driver_imu_calibrate_gyro()`，开机永远使用 `sensors.json` 中的 `[0,0,0]` bias
+2. `sensor_config.c` 只有 load 逻辑，没有 save 逻辑，校准结果重启丢失
+3. `imu_update()` 中 yaw 未做 `fmod` 归一化，积分无限累积到 5764°+
+
+**修复内容：**
+
+| 文件 | 修改 |
+|------|------|
+| `sensor_config.h` | 新增 `sensor_config_save_imu_bias()` 声明 |
+| `sensor_config.c` | 实现 `sensor_config_save_imu_bias()`：读取 sensors.json → 修改 `imu.gyro_bias_dps` → 重写文件 |
+| `driver_imu.c` | `imu_update()` 中 yaw 做 `while (s_yaw >= 360) s_yaw -= 360` 归一化 |
+| `driver_imu.c` | `driver_imu_start()` 启动时自动检测 bias 是否全零，若是则自动校准 5s 并持久化到 sensors.json |
+| `serial_cli.c` | 新增 `imu_calibrate` CLI 命令，支持手动重新校准 |
+
+**预期修复后验证：**
+```bash
+imu_test -c 60 -d 1000
+# 预期：Gyro z 静态 ≈ 0.00°/s，Yaw 在 0~360° 范围，60s 漂移 <5°
+```
+
+**产出文件清单：**
+- 修改：`main/drivers/sensor_config.h` `main/drivers/sensor_config.c` `main/drivers/driver_imu.c` `main/cli/serial_cli.c`
+- 新增：`test_plan.md`（各 Phase 完整测试指南含 CLI 命令速查表）

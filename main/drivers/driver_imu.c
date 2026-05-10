@@ -227,6 +227,10 @@ static void imu_update(const imu_config_t *config, int16_t *accel_raw, int16_t *
         s_pitch += gy * dt;
         s_yaw += gz * dt;
 
+        /* Normalize yaw to 0..360 */
+        while (s_yaw >= 360.0f) s_yaw -= 360.0f;
+        while (s_yaw < 0.0f) s_yaw += 360.0f;
+
         /* Complementary filter: weight gyro more heavily */
         s_roll = COMP_FILTER_ALPHA * s_roll + (1.0f - COMP_FILTER_ALPHA) * accel_roll;
         s_pitch = COMP_FILTER_ALPHA * s_pitch + (1.0f - COMP_FILTER_ALPHA) * accel_pitch;
@@ -383,6 +387,20 @@ esp_err_t driver_imu_start(void)
 
     s_running = true;
     s_last_update_us = 0;
+
+    /* Auto-calibrate gyro bias on first start if all biases are zero */
+    if (s_gyro_bias_dps[0] == 0.0f && s_gyro_bias_dps[1] == 0.0f && s_gyro_bias_dps[2] == 0.0f) {
+        ESP_LOGI(TAG, "Gyro bias not calibrated, running auto-calibration...");
+        esp_err_t cal_ret = driver_imu_calibrate_gyro();
+        if (cal_ret == ESP_OK) {
+            sensor_config_save_imu_bias(s_gyro_bias_dps);
+        } else {
+            ESP_LOGW(TAG, "Auto-calibration failed, continuing with zero bias");
+        }
+    } else {
+        ESP_LOGI(TAG, "Using saved gyro bias: [%.4f, %.4f, %.4f] dps",
+                 s_gyro_bias_dps[0], s_gyro_bias_dps[1], s_gyro_bias_dps[2]);
+    }
 
     BaseType_t xReturned = xTaskCreatePinnedToCore(
         imu_task, "imu_task", 3072, (void *)config, 6, &s_task_handle, 1);

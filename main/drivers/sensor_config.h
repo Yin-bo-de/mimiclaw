@@ -56,6 +56,9 @@ const gps_config_t *sensor_config_get_gps(void);
 /* Load sensors.json config from SPIFFS */
 esp_err_t sensor_config_load(void);
 
+/* Save IMU gyro bias to sensors.json (persists across reboots) */
+esp_err_t sensor_config_save_imu_bias(const float bias_dps[3]);
+
 /* Initialize sensor config (loads from SPIFFS on first call) */
 esp_err_t sensor_config_init(void);
 
