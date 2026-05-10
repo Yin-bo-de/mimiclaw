@@ -622,3 +622,31 @@ tool_exec nav_status {}
 
 **产出文件清单：**
 - 修改：`main/drivers/driver_imu.c` `main/drivers/driver_ultrasonic.c` `main/drivers/driver_gps.c`
+
+---
+
+## 启动时序竞态修复 (2026-05-10)
+
+**测试场景：** 烧录后启动立即 panic
+**回溯：**
+```
+assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+Backtrace: ... nav_situation_update_distances ... ultrasonic_task
+```
+
+**根因分析：**
+启动序列中 `tool_registry_init()` (L144) 在 `nav_controller_init()` (L145) 之前执行。
+`tool_registry_init()` → `tool_sensors_init()` → `driver_ultrasonic_start()` 创建 `ultrasonic_task`。
+任务一创建立即被调度运行，第一轮轮询完调用 `nav_situation_update_distances()`，
+此时 `nav_situation_init()` 尚未执行，`s_mutex` 为 NULL，触发 FreeRTOS assert。
+
+**修复内容：**
+在 `nav_situation.c` 所有 update/set/clear 函数入口统一增加 `if (!s_mutex) return;` guard：
+- `nav_situation_update_distances()`
+- `nav_situation_update_imu()`
+- `nav_situation_update_gps()`
+- `nav_situation_set_goal()`
+- `nav_situation_clear_goal()`
+
+**产出文件清单：**
+- 修改：`main/nav/nav_situation.c`

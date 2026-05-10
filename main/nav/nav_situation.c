@@ -38,6 +38,7 @@ void nav_situation_get(nav_situation_t *out)
 void nav_situation_update_distances(int left_cm, int front_cm, int right_cm,
                                     bool left_valid, bool front_valid, bool right_valid)
 {
+    if (!s_mutex) return;
     int64_t now = esp_timer_get_time();
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_situation.distances_cm[0] = left_cm;
@@ -54,6 +55,7 @@ void nav_situation_update_distances(int left_cm, int front_cm, int right_cm,
 
 void nav_situation_update_imu(float roll, float pitch, float yaw, float gz)
 {
+    if (!s_mutex) return;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_situation.roll_deg  = roll;
     s_situation.pitch_deg = pitch;
@@ -67,6 +69,7 @@ void nav_situation_update_imu(float roll, float pitch, float yaw, float gz)
 void nav_situation_update_gps(double lat, double lon, bool fix, int sats,
                                double speed_mps, double course_deg)
 {
+    if (!s_mutex) return;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_situation.lat        = lat;
     s_situation.lon        = lon;
@@ -80,6 +83,7 @@ void nav_situation_update_gps(double lat, double lon, bool fix, int sats,
 
 void nav_situation_set_goal(double lat, double lon, const char *name)
 {
+    if (!s_mutex) return;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_situation.goal_lat = lat;
     s_situation.goal_lon = lon;
@@ -91,6 +95,7 @@ void nav_situation_set_goal(double lat, double lon, const char *name)
 
 void nav_situation_clear_goal(void)
 {
+    if (!s_mutex) return;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_situation.has_goal       = false;
     s_situation.goal_name[0]   = '\0';
