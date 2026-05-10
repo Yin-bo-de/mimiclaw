@@ -276,3 +276,60 @@ esp_err_t tool_gps_test_execute(const char *input_json, char *output, size_t out
 
     return ESP_OK;
 }
+
+/* --- LLM-facing read tools (single snapshot, structured JSON) --- */
+
+esp_err_t tool_read_distance_execute(const char *input_json, char *output, size_t output_size)
+{
+    (void)input_json;
+    ultrasonic_reading_t left, front, right;
+    driver_ultrasonic_get_all(&left, &front, &right);
+
+    int64_t age_ms = (esp_timer_get_time() - front.timestamp_us) / 1000;
+
+    snprintf(output, output_size,
+             "{\"left_cm\":%d,\"front_cm\":%d,\"right_cm\":%d,"
+             "\"valid\":{\"left\":%s,\"front\":%s,\"right\":%s},"
+             "\"age_ms\":%lld}",
+             left.distance_cm, front.distance_cm, right.distance_cm,
+             left.valid  ? "true" : "false",
+             front.valid ? "true" : "false",
+             right.valid ? "true" : "false",
+             (long long)age_ms);
+    return ESP_OK;
+}
+
+esp_err_t tool_read_imu_execute(const char *input_json, char *output, size_t output_size)
+{
+    (void)input_json;
+    imu_reading_t r = driver_imu_get_reading();
+    int64_t age_ms  = (esp_timer_get_time() - r.timestamp_us) / 1000;
+
+    snprintf(output, output_size,
+             "{\"roll\":%.2f,\"pitch\":%.2f,\"yaw\":%.2f,"
+             "\"gz_dps\":%.2f,\"valid\":%s,\"age_ms\":%lld}",
+             r.roll_deg, r.pitch_deg, r.yaw_deg,
+             r.gyro_dps[2],
+             r.valid ? "true" : "false",
+             (long long)age_ms);
+    return ESP_OK;
+}
+
+esp_err_t tool_read_gps_execute(const char *input_json, char *output, size_t output_size)
+{
+    (void)input_json;
+    gps_reading_t r = driver_gps_get_reading();
+    int64_t age_ms  = (esp_timer_get_time() - r.timestamp_us) / 1000;
+
+    snprintf(output, output_size,
+             "{\"lat\":%.6f,\"lon\":%.6f,"
+             "\"fix\":%s,\"sats\":%d,"
+             "\"speed_mps\":%.2f,\"course_deg\":%.1f,"
+             "\"age_ms\":%lld}",
+             r.latitude, r.longitude,
+             r.fix_valid ? "true" : "false",
+             r.satellites,
+             r.speed_mps, r.course_deg,
+             (long long)age_ms);
+    return ESP_OK;
+}

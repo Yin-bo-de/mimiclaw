@@ -35,6 +35,11 @@ idf_component_register(
         "drivers/driver_ultrasonic.c"
         "drivers/driver_imu.c"
         "drivers/driver_gps.c"
+        "nav/nav_situation.c"
+        "nav/nav_config.c"
+        "nav/nav_waypoints.c"
+        "nav/nav_planner.c"
+        "tools/tool_nav.c"
     INCLUDE_DIRS
         "."
     REQUIRES

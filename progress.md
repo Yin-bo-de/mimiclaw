@@ -229,6 +229,75 @@ idf.py -p /dev/cu.usbmodem21201 flash monitor
 - UART 端口：UART1
 - 波特率：9600
 
-### Phase 4: 导航系统集成 (待开始)
+### Phase 4: 态势结构 + Waypoint 存储 + 传感器工具 (已完成) ✅
 
-### Phase 4: 导航系统集成 (待开始)
+**完成状态：** 100%
+**完成时间：** 2026-05-10
+
+**已实现的功能：**
+
+1. **导航态势结构 (`nav/nav_situation.{h,c}`)**
+   - mutex 保护的共享态势结构 `nav_situation_t`
+   - 包含超声波（3路）、IMU（roll/pitch/yaw/gz）、GPS（lat/lon/fix/sats/speed/course）、导航目标字段
+   - 提供 init/get/update_distances/update_imu/update_gps/set_goal/clear_goal 接口
+   - L1/L2 任务（后续 Phase）通过此结构消费传感器数据
+
+2. **导航参数配置 (`nav/nav_config.{h,c}`)**
+   - 从 `/spiffs/config/nav.json` 加载运行时参数
+   - 覆盖 L1（emergency_stop_cm）、L2（速度、阈值、PID）、escalate（冷却、卡死判定）所有参数
+   - 文件缺失时自动使用规格书默认值
+
+3. **Waypoint 存储 (`nav/nav_waypoints.{h,c}`)**
+   - CRUD 操作 `/spiffs/config/waypoints.json`
+   - 支持命名存储（save）、按名查找（find）、删除（delete）、枚举（list）
+   - 最大 32 条，重启后持久化保留
+   - mutex 保护，写操作实时同步到 SPIFFS
+
+4. **导航规划工具 (`nav/nav_planner.{h,c}`)**
+   - Haversine 大圆距离计算（精度 <1m@100m）
+   - 方位角计算（目标方向，0=北，顺时针）
+   - 航向误差归一化（[-180°, +180°]，供 L2 PID 使用）
+
+5. **LLM 传感器读取工具（扩展 `tool_sensors.{h,c}`）**
+   - `read_distance`：返回三路超声波当前距离 + 有效性 + 数据新鲜度（JSON）
+   - `read_imu`：返回 roll/pitch/yaw/gz_dps + 有效性（JSON）
+   - `read_gps`：返回 lat/lon/fix/sats/speed_mps/course_deg（JSON）
+
+6. **导航工具层 (`tools/tool_nav.{h,c}`)**
+   - `nav_save_waypoint`：读当前 GPS，无 fix 时拒绝，成功写入 waypoints.json
+   - `nav_list_waypoints`：返回所有 waypoint 列表（JSON）
+   - `nav_delete_waypoint`：按名删除 waypoint
+   - `nav_status`：返回当前导航状态（Phase 4 = IDLE）+ GPS + 距离 + 姿态 + 目标信息
+
+7. **构建系统与注册**
+   - `CMakeLists.txt`：新增 nav/ 目录 4 个 .c 文件 + tools/tool_nav.c
+   - `mimi_config.h`：添加导航任务参数常量（L1/L2 栈/优先级/周期）+ 文件路径常量
+   - `tool_registry.c`：MAX_TOOLS 33 → 40，注册 7 个新工具（3 传感器 + 4 导航）
+
+8. **SPIFFS 配置文件**
+   - 新增 `spiffs_data/config/nav.json`（规格书默认参数）
+   - 新增 `spiffs_data/config/waypoints.json`（初始空列表）
+
+**验收测试流程：**
+```
+# 通过 Telegram/飞书 / CLI 发送：
+read_gps              # 读取当前 GPS 数据
+nav_save_waypoint {"name":"测试点"}  # 保存当前位置（需 GPS fix）
+nav_list_waypoints    # 列出所有 waypoint
+# 重启设备后：
+nav_list_waypoints    # 验证 waypoint 仍持久化
+nav_delete_waypoint {"name":"测试点"}  # 删除
+```
+
+**引脚分配（延续前序 Phase 配置）：**
+- 超声波：L(TRIG=10,ECHO=12) F(TRIG=13,ECHO=14) R(TRIG=15,ECHO=16)
+- IMU I2C：SDA=8, SCL=9
+- GPS UART1：RX=17, TX=18
+
+**产出文件清单：**
+- 新增：`main/nav/nav_situation.{h,c}` `nav_config.{h,c}` `nav_waypoints.{h,c}` `nav_planner.{h,c}`
+- 新增：`main/tools/tool_nav.{h,c}`
+- 新增：`spiffs_data/config/nav.json` `waypoints.json`
+- 修改：`main/tools/tool_sensors.{h,c}` `tool_registry.c` `mimi_config.h` `CMakeLists.txt`
+
+### Phase 5: L1 反射层 (待开始)

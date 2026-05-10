@@ -190,3 +190,32 @@
 #define MIMI_ONBOARD_HTTP_PORT    80
 #define MIMI_ONBOARD_DNS_STACK    (4 * 1024)
 #define MIMI_ONBOARD_MAX_SCAN     20
+
+/* Navigation — FreeRTOS task parameters */
+#define MIMI_NAV_DRIVER_GPS_STACK     (4 * 1024)
+#define MIMI_NAV_DRIVER_GPS_PRIO      4
+#define MIMI_NAV_DRIVER_GPS_CORE      0
+
+#define MIMI_NAV_DRIVER_IMU_STACK     (3 * 1024)
+#define MIMI_NAV_DRIVER_IMU_PRIO      6
+#define MIMI_NAV_DRIVER_IMU_CORE      1
+
+#define MIMI_NAV_DRIVER_US_STACK      (3 * 1024)
+#define MIMI_NAV_DRIVER_US_PRIO       5
+#define MIMI_NAV_DRIVER_US_CORE       1
+
+#define MIMI_NAV_L1_STACK             (3 * 1024)
+#define MIMI_NAV_L1_PRIO              7   /* highest — must preempt L2 and agent */
+#define MIMI_NAV_L1_CORE              1
+#define MIMI_NAV_L1_PERIOD_MS         20  /* 50 Hz */
+
+#define MIMI_NAV_L2_STACK             (6 * 1024)
+#define MIMI_NAV_L2_PRIO              5
+#define MIMI_NAV_L2_CORE              1
+#define MIMI_NAV_L2_PERIOD_MS         100 /* 10 Hz */
+
+#define MIMI_NAV_ESCALATE_COOLDOWN_S  60
+
+/* Navigation — SPIFFS config paths */
+#define MIMI_NAV_PARAMS_FILE      MIMI_SPIFFS_CONFIG_DIR "/nav.json"
+#define MIMI_NAV_WAYPOINTS_FILE   MIMI_SPIFFS_CONFIG_DIR "/waypoints.json"

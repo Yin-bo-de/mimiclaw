@@ -10,6 +10,7 @@
 #include "tools/tool_rule.h"
 #include "tools/tool_ota.h"
 #include "tools/tool_sensors.h"
+#include "tools/tool_nav.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -17,7 +18,7 @@
 
 static const char *TAG = "tools";
 
-#define MAX_TOOLS 33
+#define MAX_TOOLS 40
 
 static mimi_tool_t s_tools[MAX_TOOLS];
 static int s_tool_count = 0;
@@ -446,6 +447,99 @@ esp_err_t tool_registry_init(void)
         .execute = tool_gps_test_execute,
     };
     register_tool(&gpt);
+
+    /* Register LLM-facing sensor read tools */
+    mimi_tool_t rd = {
+        .name = "read_distance",
+        .description = "Read the current ultrasonic distance sensor values (left / front / right). "
+            "Returns distances in cm and data freshness. Use before navigation decisions.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_read_distance_execute,
+    };
+    register_tool(&rd);
+
+    mimi_tool_t ri = {
+        .name = "read_imu",
+        .description = "Read the current IMU (MPU6050) orientation: roll, pitch, yaw angles and yaw rate. "
+            "Yaw drifts without GPS correction; use GPS course when speed > 0.5 m/s.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_read_imu_execute,
+    };
+    register_tool(&ri);
+
+    mimi_tool_t rg = {
+        .name = "read_gps",
+        .description = "Read the current GPS position from the NEO-6M module. "
+            "Returns lat/lon, fix status, satellite count, speed, and course. "
+            "Position is only reliable when fix=true and sats >= 4.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_read_gps_execute,
+    };
+    register_tool(&rg);
+
+    /* Register nav waypoint + status tools */
+    tool_nav_init();
+
+    mimi_tool_t nsw = {
+        .name = "nav_save_waypoint",
+        .description = "Save the car's current GPS position as a named waypoint. "
+            "Requires a valid GPS fix. The waypoint persists across reboots and can be used with nav_goto_waypoint. "
+            "If a waypoint with the same name already exists it is overwritten.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"name\":{\"type\":\"string\",\"description\":\"Unique waypoint name (e.g. '快递柜')\"},"
+            "\"notes\":{\"type\":\"string\",\"description\":\"Optional description or landmark notes\"}"
+            "},"
+            "\"required\":[\"name\"]}",
+        .execute = tool_nav_save_waypoint_execute,
+    };
+    register_tool(&nsw);
+
+    mimi_tool_t nlw = {
+        .name = "nav_list_waypoints",
+        .description = "List all saved waypoints with their names, GPS coordinates, and satellite count at save time.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_nav_list_waypoints_execute,
+    };
+    register_tool(&nlw);
+
+    mimi_tool_t ndw = {
+        .name = "nav_delete_waypoint",
+        .description = "Delete a saved waypoint by name.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"name\":{\"type\":\"string\",\"description\":\"Waypoint name to delete\"}"
+            "},"
+            "\"required\":[\"name\"]}",
+        .execute = tool_nav_delete_waypoint_execute,
+    };
+    register_tool(&ndw);
+
+    mimi_tool_t nst = {
+        .name = "nav_status",
+        .description = "Get the current navigation status: FSM state, active goal, GPS position, distances, and IMU orientation. "
+            "Call this after receiving a NAV escalate event to assess the situation.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_nav_status_execute,
+    };
+    register_tool(&nst);
 
     build_tools_json();
 

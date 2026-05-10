@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "l1": {
+    "emergency_stop_cm": 20,
+    "tick_period_ms": 20
+  },
+  "l2": {
+    "tick_period_ms": 100,
+    "cruise_speed_pct": 35,
+    "avoid_speed_pct": 20,
+    "reverse_speed_pct": 25,
+    "avoid_trigger_cm": 60,
+    "emergency_reverse_cm": 25,
+    "clear_cm": 100,
+    "avoid_max_ms": 2000,
+    "reverse_ms": 800,
+    "replan_ms": 1500,
+    "arrival_radius_m": 3.0,
+    "heading_kp": 2.0,
+    "heading_max_steer_pct": 100
+  },
+  "escalate": {
+    "cooldown_s": 60,
+    "stuck_window_s": 10,
+    "stuck_distance_m": 0.30,
+    "oscillation_window_s": 15,
+    "oscillation_count": 4,
+    "lost_distance_m": 20.0,
+    "goal_unreachable_window_s": 30
+  }
+}
