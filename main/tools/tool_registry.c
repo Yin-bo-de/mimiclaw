@@ -17,7 +17,7 @@
 
 static const char *TAG = "tools";
 
-#define MAX_TOOLS 31
+#define MAX_TOOLS 32
 
 static mimi_tool_t s_tools[MAX_TOOLS];
 static int s_tool_count = 0;
@@ -420,6 +420,19 @@ esp_err_t tool_registry_init(void)
         .execute = tool_ultrasonic_test_execute,
     };
     register_tool(&ut);
+
+    mimi_tool_t it = {
+        .name = "imu_test",
+        .description = "Test IMU (MPU6050) sensor readings. Leave input empty for 10 readings.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"continuous\":{\"type\":\"boolean\",\"description\":\"Run continuously\"},"
+            "\"count\":{\"type\":\"integer\",\"description\":\"Number of measurements\"},"
+            "\"delay_ms\":{\"type\":\"integer\",\"description\":\"Delay between measurements\"}},"
+            "\"required\":[]}",
+        .execute = tool_imu_test_execute,
+    };
+    register_tool(&it);
 
     build_tools_json();
 

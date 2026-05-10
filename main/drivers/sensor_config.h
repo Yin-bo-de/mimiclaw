@@ -23,8 +23,23 @@ typedef struct {
     bool loaded;
 } ultrasonic_config_t;
 
-/* Get ultrasonic config (Phase 1 only, others added later) */
+/* IMU (MPU6050) config */
+typedef struct {
+    int i2c_port;
+    int sda_gpio;
+    int scl_gpio;
+    uint8_t address;
+    int freq_hz;
+    int sample_hz;
+    float gyro_bias_dps[3]; /* [x, y, z] */
+    bool loaded;
+} imu_config_t;
+
+/* Get ultrasonic config */
 const ultrasonic_config_t *sensor_config_get_ultrasonic(void);
+
+/* Get IMU config */
+const imu_config_t *sensor_config_get_imu(void);
 
 /* Load sensors.json config from SPIFFS */
 esp_err_t sensor_config_load(void);

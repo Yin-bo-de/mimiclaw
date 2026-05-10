@@ -33,10 +33,12 @@ idf_component_register(
         "onboard/wifi_onboard.c"
         "drivers/sensor_config.c"
         "drivers/driver_ultrasonic.c"
+        "drivers/driver_imu.c"
     INCLUDE_DIRS
         "."
     REQUIRES
         nvs_flash esp_wifi esp_netif esp_http_client esp_http_server
         esp_https_ota esp_event json spiffs console vfs app_update esp-tls
-        esp_timer esp_websocket_client esp_driver_gpio esp_driver_ledc
+        esp_timer esp_websocket_client esp_driver_gpio esp_driver_ledc esp_driver_i2c
+        driver
 )

@@ -79,7 +79,83 @@ idf.py -p /dev/cu.usbmodem21201 flash monitor
 - 前：TRIG=13，ECHO=14
 - 右：TRIG=15，ECHO=16
 
-### Phase 2: MPU6050 驱动 (待开始)
+### Phase 2: MPU6050 驱动 (已完成) ✅
+
+**完成状态：** 100%
+**完成时间：** 2026-05-10
+
+**已实现的功能：**
+
+1. **传感器配置管理**
+   - 在 `drivers/sensor_config.h` 中新增 `imu_config_t` 结构体
+   - 在 `drivers/sensor_config.c` 中新增 `imu_load_defaults()` 函数
+   - 从 `/spiffs/config/sensors.json` 读取 IMU 配置
+   - 支持配置：I2C 端口、SDA/SCL GPIO、地址、频率、采样率、gyro bias
+   - 默认配置：I2C0, SDA=8, SCL=9, 0x68, 400kHz, 100Hz
+
+2. **MPU6050 驱动**
+   - 新增 `drivers/driver_imu.h` - 驱动接口
+   - 新增 `drivers/driver_imu.c` - 驱动实现
+   - 使用 ESP-IDF I2C 主设备驱动进行通信
+   - 实现互补滤波计算 roll/pitch/yaw
+   - 支持 gyro bias 校准（5秒静态校准）
+   - 后台 FreeRTOS 任务（优先级 6，核心 1）轮询测量
+   - 测量结果包含加速度(xyz)、陀螺仪(xyz)、姿态角
+
+3. **工具层封装**
+   - 在 `tools/tool_sensors.h` 中新增 `tool_imu_test_execute` 声明
+   - 在 `tools/tool_sensors.c` 中实现 `tool_imu_test_execute` 函数
+   - 新增 `imu_test` 工具（支持 CLI 调用）
+   - 支持连续测试模式、自定义采样数和延迟
+
+4. **CLI 命令**
+   - 在 `cli/serial_cli.c` 中新增 `imu_test` 命令
+   - 支持参数：
+     - `-c <n>`：采样数量（默认 10）
+     - `-d <ms>`：采样间隔（默认 1000ms）
+   - 显示格式：Roll:xx° Pitch:xx° Yaw:xx° Gx:xx Gy:xx Gz:xx [V:1] Age:xxxms
+
+5. **构建系统更新**
+   - 修改 `main/CMakeLists.txt`
+     - 新增 `drivers/driver_imu.c`
+     - 添加 `esp_driver_i2c` 到 REQUIRES 依赖
+     - 确保包含 I2C 驱动支持
+
+6. **工具注册表更新**
+   - 修改 `tools/tool_registry.c`
+     - `MAX_TOOLS` 从 31 增加到 32
+     - 在 tool_registry_init() 中注册 imu_test 工具
+
+7. **配置文件**
+   - 修改 `spiffs_data/config/sensors.json`
+   - 新增 IMU 配置段
+   - 可配置 I2C 引脚、地址、频率、采样率、gyro bias
+
+**测试命令：**
+```bash
+# 默认 10 次采样，间隔 1 秒
+imu_test
+
+# 20 次采样
+imu_test -c 20
+
+# 500ms 间隔
+imu_test -d 500
+
+# 5 次采样，300ms 间隔
+imu_test -c 5 -d 300
+```
+
+**构建命令：**
+```bash
+cd /Users/yinbo/AI_Project/mimiclaw
+idf.py build
+idf.py -p /dev/cu.usbmodem21201 flash monitor
+```
+
+**引脚分配：**
+- I2C SDA: GPIO 8
+- I2C SCL: GPIO 9
 
 ### Phase 3: NEO-6M GPS 驱动 (待开始)
 

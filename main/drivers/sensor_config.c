@@ -23,7 +23,16 @@ static const char *TAG = "sensor_config";
 #define US_MAX_RANGE_DEF    400
 #define US_ROUND_GAP_DEF    60
 
+/* Defaults for MPU6050 */
+#define IMU_I2C_PORT_DEF         0
+#define IMU_SDA_GPIO_DEF         8
+#define IMU_SCL_GPIO_DEF         9
+#define IMU_ADDRESS_DEF          0x68
+#define IMU_FREQ_HZ_DEF          400000
+#define IMU_SAMPLE_HZ_DEF        100
+
 static ultrasonic_config_t s_ultrasonic;
+static imu_config_t s_imu;
 static bool s_initialized = false;
 
 static void ultrasonic_load_defaults(void)
@@ -39,9 +48,24 @@ static void ultrasonic_load_defaults(void)
     s_ultrasonic.loaded = false;
 }
 
+static void imu_load_defaults(void)
+{
+    s_imu.i2c_port = IMU_I2C_PORT_DEF;
+    s_imu.sda_gpio = IMU_SDA_GPIO_DEF;
+    s_imu.scl_gpio = IMU_SCL_GPIO_DEF;
+    s_imu.address = IMU_ADDRESS_DEF;
+    s_imu.freq_hz = IMU_FREQ_HZ_DEF;
+    s_imu.sample_hz = IMU_SAMPLE_HZ_DEF;
+    s_imu.gyro_bias_dps[0] = 0.0f;
+    s_imu.gyro_bias_dps[1] = 0.0f;
+    s_imu.gyro_bias_dps[2] = 0.0f;
+    s_imu.loaded = false;
+}
+
 esp_err_t sensor_config_load(void)
 {
     ultrasonic_load_defaults();
+    imu_load_defaults();
 
     FILE *f = fopen(SENSORS_CONFIG_PATH, "r");
     if (!f) {
@@ -104,13 +128,41 @@ esp_err_t sensor_config_load(void)
         if (cJSON_IsNumber(v)) s_ultrasonic.round_robin_gap_ms = v->valueint;
     }
 
+    cJSON *imu = cJSON_GetObjectItem(root, "imu");
+    if (imu) {
+        cJSON *v;
+        v = cJSON_GetObjectItem(imu, "i2c_port");
+        if (cJSON_IsNumber(v)) s_imu.i2c_port = v->valueint;
+        v = cJSON_GetObjectItem(imu, "sda_gpio");
+        if (cJSON_IsNumber(v)) s_imu.sda_gpio = v->valueint;
+        v = cJSON_GetObjectItem(imu, "scl_gpio");
+        if (cJSON_IsNumber(v)) s_imu.scl_gpio = v->valueint;
+        v = cJSON_GetObjectItem(imu, "address");
+        if (cJSON_IsString(v)) s_imu.address = (uint8_t)strtoul(v->valuestring, NULL, 0);
+        else if (cJSON_IsNumber(v)) s_imu.address = (uint8_t)v->valueint;
+        v = cJSON_GetObjectItem(imu, "freq_hz");
+        if (cJSON_IsNumber(v)) s_imu.freq_hz = v->valueint;
+        v = cJSON_GetObjectItem(imu, "sample_hz");
+        if (cJSON_IsNumber(v)) s_imu.sample_hz = v->valueint;
+        cJSON *bias = cJSON_GetObjectItem(imu, "gyro_bias_dps");
+        if (cJSON_IsArray(bias) && cJSON_GetArraySize(bias) == 3) {
+            s_imu.gyro_bias_dps[0] = (float)cJSON_GetArrayItem(bias, 0)->valuedouble;
+            s_imu.gyro_bias_dps[1] = (float)cJSON_GetArrayItem(bias, 1)->valuedouble;
+            s_imu.gyro_bias_dps[2] = (float)cJSON_GetArrayItem(bias, 2)->valuedouble;
+        }
+    }
+
     cJSON_Delete(root);
     s_ultrasonic.loaded = true;
+    s_imu.loaded = true;
     ESP_LOGI(TAG, "Ultrasonic config loaded: L(GPIO%d/%d F(GPIO%d/%d) R(GPIO%d/%d) max=%dcm gap=%dms",
              s_ultrasonic.left.trig_gpio, s_ultrasonic.left.echo_gpio,
              s_ultrasonic.front.trig_gpio, s_ultrasonic.front.echo_gpio,
              s_ultrasonic.right.trig_gpio, s_ultrasonic.right.echo_gpio,
              s_ultrasonic.max_range_cm, s_ultrasonic.round_robin_gap_ms);
+    ESP_LOGI(TAG, "IMU config loaded: I2C%d SDA=GPIO%d SCL=GPIO%d addr=0x%02x freq=%dHz sample=%dHz",
+             s_imu.i2c_port, s_imu.sda_gpio, s_imu.scl_gpio, s_imu.address,
+             s_imu.freq_hz, s_imu.sample_hz);
     return ESP_OK;
 }
 
@@ -119,10 +171,16 @@ const ultrasonic_config_t *sensor_config_get_ultrasonic(void)
     return &s_ultrasonic;
 }
 
+const imu_config_t *sensor_config_get_imu(void)
+{
+    return &s_imu;
+}
+
 esp_err_t sensor_config_init(void)
 {
     if (!s_initialized) {
         ultrasonic_load_defaults();
+        imu_load_defaults();
         sensor_config_load();
         s_initialized = true;
         ESP_LOGI(TAG, "sensor config initialized");
