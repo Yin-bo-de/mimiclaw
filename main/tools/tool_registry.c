@@ -9,6 +9,7 @@
 #include "tools/tool_script.h"
 #include "tools/tool_rule.h"
 #include "tools/tool_ota.h"
+#include "tools/tool_sensors.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -16,7 +17,7 @@
 
 static const char *TAG = "tools";
 
-#define MAX_TOOLS 30
+#define MAX_TOOLS 31
 
 static mimi_tool_t s_tools[MAX_TOOLS];
 static int s_tool_count = 0;
@@ -403,6 +404,22 @@ esp_err_t tool_registry_init(void)
         .execute = tool_ota_execute,
     };
     register_tool(&ota);
+
+    /* Register Sensors tools */
+    tool_sensors_init();
+
+    mimi_tool_t ut = {
+        .name = "ultrasonic_test",
+        .description = "Test ultrasonic sensor readings. Leave input empty for 10 readings.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"continuous\":{\"type\":\"boolean\",\"description\":\"Run continuously\"},"
+            "\"count\":{\"type\":\"integer\",\"description\":\"Number of measurements\"},"
+            "\"delay_ms\":{\"type\":\"integer\",\"description\":\"Delay between measurements\"}},"
+            "\"required\":[]}",
+        .execute = tool_ultrasonic_test_execute,
+    };
+    register_tool(&ut);
 
     build_tools_json();
 

@@ -26,10 +26,13 @@ idf_component_register(
         "tools/tool_rule.c"
         "tools/tool_ota.c"
         "tools/gpio_policy.c"
+        "tools/tool_sensors.c"
         "ota/ota_manager.c"
         "rule_engine/rule_engine.c"
         "skills/skill_loader.c"
         "onboard/wifi_onboard.c"
+        "drivers/sensor_config.c"
+        "drivers/driver_ultrasonic.c"
     INCLUDE_DIRS
         "."
     REQUIRES

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "ultrasonic": {
+    "left":  {"trig_gpio": 10, "echo_gpio": 12},
+    "front": {"trig_gpio": 13, "echo_gpio": 14},
+    "right": {"trig_gpio": 15, "echo_gpio": 16},
+    "max_range_cm": 400,
+    "round_robin_gap_ms": 60
+  }
+}

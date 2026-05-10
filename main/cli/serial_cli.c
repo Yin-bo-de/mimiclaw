@@ -11,10 +11,14 @@
 #include "proxy/http_proxy.h"
 #include "tools/tool_registry.h"
 #include "tools/tool_web_search.h"
+#include "tools/tool_sensors.h"
+#include "drivers/driver_ultrasonic.h"
 #include "cron/cron_service.h"
 #include "heartbeat/heartbeat.h"
 #include "skills/skill_loader.h"
 #include "ota/ota_manager.h"
+
+#include "esp_timer.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -665,6 +669,52 @@ static int cmd_heartbeat_trigger(int argc, char **argv)
     return 0;
 }
 
+/* --- ultrasonic_test command --- */
+static struct {
+    struct arg_int *count;
+    struct arg_int *delay_ms;
+    struct arg_end *end;
+} ultrasonic_test_args;
+
+static int cmd_ultrasonic_test(int argc, char **argv)
+{
+    int count = 10;
+    int delay_ms = 1000;
+
+    if (argc > 1) {
+        int nerrors = arg_parse(argc, argv, (void **)&ultrasonic_test_args);
+        if (nerrors == 0) {
+            if (ultrasonic_test_args.count->count > 0) {
+                count = (int)ultrasonic_test_args.count->ival[0];
+            }
+            if (ultrasonic_test_args.delay_ms->count > 0) {
+                delay_ms = (int)ultrasonic_test_args.delay_ms->ival[0];
+            }
+        } else {
+            arg_print_errors(stderr, ultrasonic_test_args.end, argv[0]);
+        }
+    }
+
+    printf("HC-SR04 Ultrasonic Test - %d samples, %dms delay\n", count, delay_ms);
+
+    for (int i = 0; i < count; i++) {
+        ultrasonic_reading_t left, front, right;
+        driver_ultrasonic_get_all(&left, &front, &right);
+
+        printf("%03d: Left=%3dcm, Front=%3dcm, Right=%3dcm  [V:%d,%d,%d]  Age=%lldms\n",
+               i + 1,
+               left.distance_cm, front.distance_cm, right.distance_cm,
+               left.valid ? 1 : 0, front.valid ? 1 : 0, right.valid ? 1 : 0,
+               (long long)((esp_timer_get_time() - front.timestamp_us) / 1000));
+
+        if (i < count - 1) {
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        }
+    }
+
+    return 0;
+}
+
 /* --- cron_start command --- */
 static int cmd_cron_start(int argc, char **argv)
 {
@@ -1214,6 +1264,18 @@ esp_err_t serial_cli_init(void)
         .func = &cmd_cron_start,
     };
     esp_console_cmd_register(&cron_start_cmd);
+
+    /* ultrasonic_test */
+    ultrasonic_test_args.count = arg_int0("c", "count", "<n>", "Number of samples (default: 10)");
+    ultrasonic_test_args.delay_ms = arg_int0("d", "delay", "<ms>", "Delay between samples in ms (default: 1000)");
+    ultrasonic_test_args.end = arg_end(2);
+    esp_console_cmd_t ultrasonic_test_cmd = {
+        .command = "ultrasonic_test",
+        .help = "Test ultrasonic sensor readings: ultrasonic_test [-c <n>] [-d <ms>]",
+        .func = &cmd_ultrasonic_test,
+        .argtable = &ultrasonic_test_args,
+    };
+    esp_console_cmd_register(&ultrasonic_test_cmd);
 
     /* tool_exec */
     esp_console_cmd_t tool_exec_cmd = {
