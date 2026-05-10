@@ -8,12 +8,18 @@
 typedef enum {
     RULE_TRIGGER_GPIO_READ = 0,
     RULE_TRIGGER_GPIO_READ_ALL,
-    RULE_TRIGGER_INTERVAL,  /* time-based unconditional trigger */
+    RULE_TRIGGER_INTERVAL,            /* time-based unconditional trigger */
+    RULE_TRIGGER_ULTRASONIC_DISTANCE, /* nav_situation distances_cm[channel] */
+    RULE_TRIGGER_IMU_TILT,            /* |roll| (ch=0) or |pitch| (ch=1) in degrees */
+    RULE_TRIGGER_GPS_DISTANCE_TO,     /* haversine(cur_pos, lat, lon) in meters */
 } rule_trigger_type_t;
 
 typedef struct {
     rule_trigger_type_t type;
-    int pin;            /* for GPIO_READ */
+    int pin;        /* for GPIO_READ */
+    int channel;    /* ultrasonic: 0=left,1=front,2=right; imu: 0=roll,1=pitch */
+    double lat;     /* reference point for GPS_DISTANCE_TO */
+    double lon;
 } rule_trigger_t;
 
 /* ── Condition operators ──────────────────────────────────────── */

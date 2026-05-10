@@ -504,3 +504,48 @@ nav_goto_waypoint {"name":"测试点"}
 - 新增：`main/nav/nav_escalate.{h,c}` `spiffs_data/config/NAV_PLAYBOOK.md`
 - 修改：`main/tools/tool_registry.{h,c}` `main/agent/agent_loop.c` `main/tools/tool_nav.c`
          `main/nav/nav_l2_fsm.c` `main/mimi_config.h` `main/agent/context_builder.c` `main/CMakeLists.txt`
+
+### Phase 8: 规则引擎导航传感器触发扩展 (已完成) ✅
+
+**完成状态：** 100%
+**完成时间：** 2026-05-10
+
+**已实现的功能：**
+
+1. **规则引擎扩展 (`rule_engine/rule_engine.{h,c}`)**
+   - 新增 3 种触发类型：`RULE_TRIGGER_ULTRASONIC_DISTANCE` / `RULE_TRIGGER_IMU_TILT` / `RULE_TRIGGER_GPS_DISTANCE_TO`
+   - 扩展 `rule_trigger_t`：新增 `channel`（int）、`lat`/`lon`（double）字段
+   - 新增 3 个 eval 函数，直接读取 `nav_situation_t` 快照：
+     - `eval_trigger_ultrasonic_distance(channel)` — 返回 distances_cm[channel]（cm）；channel 越界或 stale > 500ms 无效
+     - `eval_trigger_imu_tilt(channel)` — 返回 `|roll|`（ch=0）或 `|pitch|`（ch=1）取整（度）；stale > 500ms 无效
+     - `eval_trigger_gps_distance(lat, lon)` — 返回 haversine 距离取整（米）；GPS 无 fix 或 stale > 5s 无效
+   - 更新 parse/load/save：新字段完整序列化/反序列化到规则 JSON 文件
+   - `parse_trigger_type` 新增未知字符串 LOGW 警告
+
+2. **工具层扩展 (`tools/tool_rule.c` + `tool_registry.c`)**
+   - `parse_trigger_type` 识别 3 个新字符串
+   - `tool_rule_add_execute`：解析 `channel`/`lat`/`lon`；各类型参数验证（channel 越界、GPS 字段存在性）
+   - `tool_rule_list_execute`：按触发类型显示 `ch=N` 或 `lat/lon` 详情；条件 op 覆盖所有 10 种
+   - `rule_add` LLM schema：enum 枚举 6 种触发类型 + channel/lat/lon 字段描述
+
+**验收示例 — "前方 < 30cm escalate" 规则：**
+```json
+{
+  "name": "close_obstacle",
+  "interval_s": 1,
+  "cooldown_s": 30,
+  "trigger": {"type": "ultrasonic_distance", "channel": 1},
+  "condition": {"op": "<", "value": 30},
+  "actions": [{"type": "escalate", "escalate_msg": "Rule: Front sensor < 30cm obstacle detected"}]
+}
+```
+
+**引脚分配（继承前序 Phase，无新增）：**
+- 超声波：L(TRIG=10,ECHO=12) F(TRIG=13,ECHO=14) R(TRIG=15,ECHO=16)
+- IMU I2C：SDA=8, SCL=9
+- GPS UART1：RX=17, TX=18
+- 电机 ESC：GPIO 21，舵机：GPIO 11
+
+**产出文件清单：**
+- 修改：`main/rule_engine/rule_engine.{h,c}` `main/tools/tool_rule.c` `main/tools/tool_registry.c`
+- 修改：`progress.md`

@@ -16,6 +16,9 @@ static rule_trigger_type_t parse_trigger_type(const char *s)
     if (strcmp(s, "gpio_read") == 0) return RULE_TRIGGER_GPIO_READ;
     if (strcmp(s, "gpio_read_all") == 0) return RULE_TRIGGER_GPIO_READ_ALL;
     if (strcmp(s, "interval") == 0) return RULE_TRIGGER_INTERVAL;
+    if (strcmp(s, "ultrasonic_distance") == 0) return RULE_TRIGGER_ULTRASONIC_DISTANCE;
+    if (strcmp(s, "imu_tilt") == 0) return RULE_TRIGGER_IMU_TILT;
+    if (strcmp(s, "gps_distance_to") == 0) return RULE_TRIGGER_GPS_DISTANCE_TO;
     return RULE_TRIGGER_GPIO_READ;
 }
 
@@ -121,7 +124,8 @@ esp_err_t tool_rule_add_execute(const char *input_json, char *output, size_t out
             cJSON_Delete(root);
             return ESP_ERR_INVALID_ARG;
         }
-        if (rule.trigger.type != RULE_TRIGGER_INTERVAL) {
+        if (rule.trigger.type == RULE_TRIGGER_GPIO_READ ||
+            rule.trigger.type == RULE_TRIGGER_GPIO_READ_ALL) {
             cJSON *pin_j = cJSON_GetObjectItem(trigger_j, "pin");
             if (!pin_j || !cJSON_IsNumber(pin_j)) {
                 snprintf(output, output_size, "Error: 'trigger.pin' required for gpio_read / gpio_read_all");
@@ -129,6 +133,40 @@ esp_err_t tool_rule_add_execute(const char *input_json, char *output, size_t out
                 return ESP_ERR_INVALID_ARG;
             }
             rule.trigger.pin = pin_j->valueint;
+        }
+
+        /* Parse nav sensor trigger fields */
+        cJSON *ch_j = cJSON_GetObjectItem(trigger_j, "channel");
+        if (ch_j && cJSON_IsNumber(ch_j)) rule.trigger.channel = ch_j->valueint;
+        cJSON *lat_j = cJSON_GetObjectItem(trigger_j, "lat");
+        if (lat_j && cJSON_IsNumber(lat_j)) rule.trigger.lat = lat_j->valuedouble;
+        cJSON *lon_j = cJSON_GetObjectItem(trigger_j, "lon");
+        if (lon_j && cJSON_IsNumber(lon_j)) rule.trigger.lon = lon_j->valuedouble;
+
+        /* Validate nav sensor trigger parameters */
+        if (rule.trigger.type == RULE_TRIGGER_ULTRASONIC_DISTANCE) {
+            if (rule.trigger.channel < 0 || rule.trigger.channel > 2) {
+                snprintf(output, output_size,
+                         "Error: 'trigger.channel' must be 0 (left), 1 (front), or 2 (right) for ultrasonic_distance");
+                cJSON_Delete(root);
+                return ESP_ERR_INVALID_ARG;
+            }
+        }
+        if (rule.trigger.type == RULE_TRIGGER_IMU_TILT) {
+            if (rule.trigger.channel < 0 || rule.trigger.channel > 1) {
+                snprintf(output, output_size,
+                         "Error: 'trigger.channel' must be 0 (|roll|) or 1 (|pitch|) for imu_tilt");
+                cJSON_Delete(root);
+                return ESP_ERR_INVALID_ARG;
+            }
+        }
+        if (rule.trigger.type == RULE_TRIGGER_GPS_DISTANCE_TO) {
+            if (!lat_j || !cJSON_IsNumber(lat_j) || !lon_j || !cJSON_IsNumber(lon_j)) {
+                snprintf(output, output_size,
+                         "Error: 'trigger.lat' and 'trigger.lon' required for gps_distance_to");
+                cJSON_Delete(root);
+                return ESP_ERR_INVALID_ARG;
+            }
         }
     } else {
         snprintf(output, output_size, "Error: 'trigger' required object with 'type' (and 'pin' for gpio_read)");
@@ -232,23 +270,47 @@ esp_err_t tool_rule_list_execute(const char *input_json, char *output, size_t ou
 
     for (int i = 0; i < count && off < output_size - 1; i++) {
         const rule_t *r = &rules[i];
-        const char *tt = (r->trigger.type == RULE_TRIGGER_GPIO_READ) ? "gpio_read" : "gpio_read_all";
+        const char *tt;
+        switch (r->trigger.type) {
+            case RULE_TRIGGER_GPIO_READ:           tt = "gpio_read"; break;
+            case RULE_TRIGGER_GPIO_READ_ALL:       tt = "gpio_read_all"; break;
+            case RULE_TRIGGER_INTERVAL:            tt = "interval"; break;
+            case RULE_TRIGGER_ULTRASONIC_DISTANCE: tt = "ultrasonic_distance"; break;
+            case RULE_TRIGGER_IMU_TILT:            tt = "imu_tilt"; break;
+            case RULE_TRIGGER_GPS_DISTANCE_TO:     tt = "gps_distance_to"; break;
+            default:                               tt = "unknown"; break;
+        }
+        char trigger_detail[48];
+        if (r->trigger.type == RULE_TRIGGER_GPIO_READ ||
+            r->trigger.type == RULE_TRIGGER_GPIO_READ_ALL) {
+            snprintf(trigger_detail, sizeof(trigger_detail), "pin=%d", r->trigger.pin);
+        } else if (r->trigger.type == RULE_TRIGGER_ULTRASONIC_DISTANCE ||
+                   r->trigger.type == RULE_TRIGGER_IMU_TILT) {
+            snprintf(trigger_detail, sizeof(trigger_detail), "ch=%d", r->trigger.channel);
+        } else if (r->trigger.type == RULE_TRIGGER_GPS_DISTANCE_TO) {
+            snprintf(trigger_detail, sizeof(trigger_detail), "lat=%.4f,lon=%.4f",
+                     r->trigger.lat, r->trigger.lon);
+        } else {
+            snprintf(trigger_detail, sizeof(trigger_detail), "-");
+        }
         off += snprintf(output + off, output_size - off,
             "  %d. [%s] \"%s\" — %s, eval every %lus, cooldown %lus, %s, fired %d times\n"
-            "      trigger=%s(%d), condition=%s %d, actions=%d, else=%d\n",
+            "      trigger=%s(%s), condition=%s %d, actions=%d, else=%d\n",
             i + 1, r->id, r->name,
             r->enabled ? "enabled" : "disabled",
             (unsigned long)r->interval_s, (unsigned long)r->cooldown_s,
             r->last_fire > 0 ? "active" : "never fired",
             r->fire_count,
-            tt, r->trigger.pin,
+            tt, trigger_detail,
             (r->condition.op == RULE_OP_EQ) ? "==" :
             (r->condition.op == RULE_OP_NE) ? "!=" :
             (r->condition.op == RULE_OP_GT) ? ">" :
             (r->condition.op == RULE_OP_LT) ? "<" :
             (r->condition.op == RULE_OP_GE) ? ">=" :
             (r->condition.op == RULE_OP_LE) ? "<=" :
-            (r->condition.op == RULE_OP_ANY_HIGH) ? "any_high" : "all_low",
+            (r->condition.op == RULE_OP_ANY_HIGH) ? "any_high" :
+            (r->condition.op == RULE_OP_ALL_LOW)  ? "all_low"  :
+            (r->condition.op == RULE_OP_MOD_EQ)   ? "mod_eq"   : "mod_ne",
             r->condition.value,
             r->actions_count, r->else_actions_count);
     }

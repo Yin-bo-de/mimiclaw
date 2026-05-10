@@ -13,6 +13,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "nav/nav_situation.h"
+#include "nav/nav_planner.h"
+#include "esp_timer.h"
+#include <math.h>
 
 static const char *TAG = "rule_engine";
 
@@ -37,6 +41,9 @@ static const char *trigger_type_str(rule_trigger_type_t t)
         case RULE_TRIGGER_GPIO_READ: return "gpio_read";
         case RULE_TRIGGER_GPIO_READ_ALL: return "gpio_read_all";
         case RULE_TRIGGER_INTERVAL: return "interval";
+        case RULE_TRIGGER_ULTRASONIC_DISTANCE:    return "ultrasonic_distance";
+        case RULE_TRIGGER_IMU_TILT:               return "imu_tilt";
+        case RULE_TRIGGER_GPS_DISTANCE_TO:        return "gps_distance_to";
         default: return "unknown";
     }
 }
@@ -108,6 +115,42 @@ static bool eval_trigger_gpio_read_all(int *out_value)
         }
     }
     *out_value = any_high ? 1 : 0;
+    return true;
+}
+
+static bool eval_trigger_ultrasonic_distance(int channel, int *out_value)
+{
+    if (channel < 0 || channel > 2) return false;
+    nav_situation_t sit;
+    nav_situation_get(&sit);
+    if (!sit.distance_valid[channel]) return false;
+    int64_t age_us = esp_timer_get_time() - sit.distance_ts_us[channel];
+    if (age_us > 500000LL) return false;
+    *out_value = sit.distances_cm[channel];
+    return true;
+}
+
+static bool eval_trigger_imu_tilt(int channel, int *out_value)
+{
+    if (channel < 0 || channel > 1) return false;
+    nav_situation_t sit;
+    nav_situation_get(&sit);
+    if (!sit.imu_valid) return false;
+    int64_t age_us = esp_timer_get_time() - sit.imu_ts_us;
+    if (age_us > 500000LL) return false;
+    float deg = (channel == 1) ? sit.pitch_deg : sit.roll_deg;
+    *out_value = (int)fabsf(deg);
+    return true;
+}
+
+static bool eval_trigger_gps_distance(double ref_lat, double ref_lon, int *out_value)
+{
+    nav_situation_t sit;
+    nav_situation_get(&sit);
+    if (!sit.gps_fix) return false;
+    int64_t age_us = esp_timer_get_time() - sit.gps_ts_us;
+    if (age_us > 5000000LL) return false;
+    *out_value = (int)nav_planner_distance_m(sit.lat, sit.lon, ref_lat, ref_lon);
     return true;
 }
 
@@ -237,6 +280,15 @@ static void evaluate_rule(rule_t *rule)
             trigger_ok = true;
             trigger_value = rule->counter;
             break;
+        case RULE_TRIGGER_ULTRASONIC_DISTANCE:
+            trigger_ok = eval_trigger_ultrasonic_distance(rule->trigger.channel, &trigger_value);
+            break;
+        case RULE_TRIGGER_IMU_TILT:
+            trigger_ok = eval_trigger_imu_tilt(rule->trigger.channel, &trigger_value);
+            break;
+        case RULE_TRIGGER_GPS_DISTANCE_TO:
+            trigger_ok = eval_trigger_gps_distance(rule->trigger.lat, rule->trigger.lon, &trigger_value);
+            break;
         default:
             ESP_LOGW(TAG, "Rule '%s': unknown trigger type %d", rule->name, rule->trigger.type);
             return;
@@ -305,6 +357,10 @@ static rule_trigger_type_t parse_trigger_type(const char *s)
     if (strcmp(s, "gpio_read") == 0) return RULE_TRIGGER_GPIO_READ;
     if (strcmp(s, "gpio_read_all") == 0) return RULE_TRIGGER_GPIO_READ_ALL;
     if (strcmp(s, "interval") == 0) return RULE_TRIGGER_INTERVAL;
+    if (strcmp(s, "ultrasonic_distance") == 0) return RULE_TRIGGER_ULTRASONIC_DISTANCE;
+    if (strcmp(s, "imu_tilt") == 0) return RULE_TRIGGER_IMU_TILT;
+    if (strcmp(s, "gps_distance_to") == 0) return RULE_TRIGGER_GPS_DISTANCE_TO;
+    ESP_LOGW(TAG, "Unknown trigger type string: '%s', defaulting to gpio_read", s);
     return RULE_TRIGGER_GPIO_READ;
 }
 
@@ -423,6 +479,12 @@ static esp_err_t rule_load(void)
                 cJSON *pin_j = cJSON_GetObjectItem(trigger_j, "pin");
                 if (pin_j && cJSON_IsNumber(pin_j)) r->trigger.pin = pin_j->valueint;
             }
+            cJSON *ch_j = cJSON_GetObjectItem(trigger_j, "channel");
+            if (ch_j && cJSON_IsNumber(ch_j)) r->trigger.channel = ch_j->valueint;
+            cJSON *lat_j = cJSON_GetObjectItem(trigger_j, "lat");
+            if (lat_j && cJSON_IsNumber(lat_j)) r->trigger.lat = lat_j->valuedouble;
+            cJSON *lon_j = cJSON_GetObjectItem(trigger_j, "lon");
+            if (lon_j && cJSON_IsNumber(lon_j)) r->trigger.lon = lon_j->valuedouble;
         }
 
         /* Condition */
@@ -512,6 +574,14 @@ esp_err_t rule_engine_save(void)
         cJSON_AddStringToObject(trigger_j, "type", trigger_type_str(r->trigger.type));
         if (r->trigger.type == RULE_TRIGGER_GPIO_READ) {
             cJSON_AddNumberToObject(trigger_j, "pin", r->trigger.pin);
+        }
+        if (r->trigger.type == RULE_TRIGGER_ULTRASONIC_DISTANCE ||
+            r->trigger.type == RULE_TRIGGER_IMU_TILT) {
+            cJSON_AddNumberToObject(trigger_j, "channel", r->trigger.channel);
+        }
+        if (r->trigger.type == RULE_TRIGGER_GPS_DISTANCE_TO) {
+            cJSON_AddNumberToObject(trigger_j, "lat", r->trigger.lat);
+            cJSON_AddNumberToObject(trigger_j, "lon", r->trigger.lon);
         }
         cJSON_AddItemToObject(item, "trigger", trigger_j);
 
