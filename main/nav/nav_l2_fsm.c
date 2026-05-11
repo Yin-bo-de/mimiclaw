@@ -185,6 +185,12 @@ static void enter_state(l2_state_t new_state)
 
 static void fsm_cruise(const nav_situation_t *sit, const nav_config_t *cfg)
 {
+    static l2_state_t last_logged_state = L2_FAULT;
+    if (last_logged_state != s_state) {
+        ESP_LOGI(TAG, "决策：前进 (throttle=%d%%)", s_cruise_speed);
+        last_logged_state = s_state;
+    }
+
     /* Check arrival */
     if (sit->gps_fix && sit->has_goal) {
         double dist = nav_planner_distance_m(sit->lat, sit->lon,
@@ -235,6 +241,14 @@ static void fsm_cruise(const nav_situation_t *sit, const nav_config_t *cfg)
 
 static void fsm_avoid(const nav_situation_t *sit, const nav_config_t *cfg, int side)
 {
+    static l2_state_t last_logged_state = L2_FAULT;
+    if (last_logged_state != s_state) {
+        ESP_LOGI(TAG, "决策：%s (steer=%d)",
+                 side == 0 ? "左转" : "右转",
+                 side == 0 ? -100 : 100);
+        last_logged_state = s_state;
+    }
+
     int64_t elapsed_ms = (esp_timer_get_time() - s_state_enter_us) / 1000LL;
 
     /* Hard-left or hard-right */
@@ -264,6 +278,12 @@ static void fsm_avoid(const nav_situation_t *sit, const nav_config_t *cfg, int s
 
 static void fsm_reverse(const nav_situation_t *sit, const nav_config_t *cfg)
 {
+    static l2_state_t last_logged_state = L2_FAULT;
+    if (last_logged_state != s_state) {
+        ESP_LOGI(TAG, "决策：后退 (throttle=-%d%%)", cfg->reverse_speed_pct);
+        last_logged_state = s_state;
+    }
+
     (void)sit;
     int64_t elapsed_ms = (esp_timer_get_time() - s_state_enter_us) / 1000LL;
 
@@ -279,6 +299,12 @@ static void fsm_reverse(const nav_situation_t *sit, const nav_config_t *cfg)
 
 static void fsm_replan(const nav_situation_t *sit, const nav_config_t *cfg)
 {
+    static l2_state_t last_logged_state = L2_FAULT;
+    if (last_logged_state != s_state) {
+        ESP_LOGI(TAG, "决策：重新规划路径");
+        last_logged_state = s_state;
+    }
+
     int64_t elapsed_ms = (esp_timer_get_time() - s_state_enter_us) / 1000LL;
 
     /* Sweep steer: -100 → +100 in first half, +100 → -100 in second half */
