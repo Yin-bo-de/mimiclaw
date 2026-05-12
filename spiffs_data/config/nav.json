@@ -19,6 +19,18 @@
     "heading_kp": 2.0,
     "heading_max_steer_pct": 100
   },
+  "gps_filter": {
+    "sigma_pos_base_m": 2.0,
+    "sigma_accel_mps2": 1.0,
+    "speed_ewma_alpha": 0.4,
+    "course_ewma_alpha": 0.3,
+    "min_sats_accept": 4,
+    "good_sats": 7,
+    "predict_timeout_ms": 5000,
+    "predict_max_streak": 8,
+    "stationary_speed_mps": 0.3,
+    "stationary_count": 3
+  },
   "escalate": {
     "cooldown_s": 60,
     "stuck_window_s": 10,

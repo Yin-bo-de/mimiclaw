@@ -38,6 +38,18 @@ typedef struct {
     int oscillation_count;
     float lost_distance_m;
     int goal_unreachable_window_s;
+
+    /* GPS Kalman filter */
+    float gps_sigma_pos_base_m;   /* base position noise σ (metres) */
+    float gps_sigma_accel_mps2;   /* process noise — acceleration σ */
+    float gps_speed_ewma_alpha;   /* EWMA alpha for speed */
+    float gps_course_ewma_alpha;  /* EWMA alpha for course */
+    int   gps_min_sats_accept;    /* reject obs if sats < this */
+    int   gps_good_sats;          /* use R_base if sats >= this */
+    int   gps_predict_timeout_ms; /* ms without accepted obs → fix=false */
+    int   gps_predict_max_streak; /* predict-only count → fix=false */
+    float gps_stationary_speed_mps;
+    int   gps_stationary_count;   /* consecutive low-speed → clamp vx/vy */
 } nav_config_t;
 
 /**

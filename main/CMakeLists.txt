@@ -36,6 +36,7 @@ idf_component_register(
         "drivers/driver_imu.c"
         "drivers/driver_gps.c"
         "nav/nav_situation.c"
+        "nav/nav_gps_filter.c"
         "nav/nav_config.c"
         "nav/nav_waypoints.c"
         "nav/nav_planner.c"

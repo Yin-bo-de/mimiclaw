@@ -34,6 +34,18 @@ static nav_config_t s_config = {
     .oscillation_count        = 4,
     .lost_distance_m          = 20.0f,
     .goal_unreachable_window_s = 30,
+
+    /* GPS Kalman filter defaults */
+    .gps_sigma_pos_base_m    = 2.0f,
+    .gps_sigma_accel_mps2    = 1.0f,
+    .gps_speed_ewma_alpha    = 0.4f,
+    .gps_course_ewma_alpha   = 0.3f,
+    .gps_min_sats_accept     = 4,
+    .gps_good_sats           = 7,
+    .gps_predict_timeout_ms  = 5000,
+    .gps_predict_max_streak  = 8,
+    .gps_stationary_speed_mps = 0.3f,
+    .gps_stationary_count    = 3,
 };
 
 static void parse_json(cJSON *root)
@@ -76,6 +88,30 @@ static void parse_json(cJSON *root)
         if (cJSON_IsNumber(v)) s_config.heading_kp = (float)v->valuedouble;
         v = cJSON_GetObjectItem(l2, "heading_max_steer_pct");
         if (cJSON_IsNumber(v)) s_config.heading_max_steer_pct = (int)v->valuedouble;
+    }
+
+    cJSON *gpsf = cJSON_GetObjectItem(root, "gps_filter");
+    if (gpsf) {
+        v = cJSON_GetObjectItem(gpsf, "sigma_pos_base_m");
+        if (cJSON_IsNumber(v)) s_config.gps_sigma_pos_base_m = (float)v->valuedouble;
+        v = cJSON_GetObjectItem(gpsf, "sigma_accel_mps2");
+        if (cJSON_IsNumber(v)) s_config.gps_sigma_accel_mps2 = (float)v->valuedouble;
+        v = cJSON_GetObjectItem(gpsf, "speed_ewma_alpha");
+        if (cJSON_IsNumber(v)) s_config.gps_speed_ewma_alpha = (float)v->valuedouble;
+        v = cJSON_GetObjectItem(gpsf, "course_ewma_alpha");
+        if (cJSON_IsNumber(v)) s_config.gps_course_ewma_alpha = (float)v->valuedouble;
+        v = cJSON_GetObjectItem(gpsf, "min_sats_accept");
+        if (cJSON_IsNumber(v)) s_config.gps_min_sats_accept = (int)v->valuedouble;
+        v = cJSON_GetObjectItem(gpsf, "good_sats");
+        if (cJSON_IsNumber(v)) s_config.gps_good_sats = (int)v->valuedouble;
+        v = cJSON_GetObjectItem(gpsf, "predict_timeout_ms");
+        if (cJSON_IsNumber(v)) s_config.gps_predict_timeout_ms = (int)v->valuedouble;
+        v = cJSON_GetObjectItem(gpsf, "predict_max_streak");
+        if (cJSON_IsNumber(v)) s_config.gps_predict_max_streak = (int)v->valuedouble;
+        v = cJSON_GetObjectItem(gpsf, "stationary_speed_mps");
+        if (cJSON_IsNumber(v)) s_config.gps_stationary_speed_mps = (float)v->valuedouble;
+        v = cJSON_GetObjectItem(gpsf, "stationary_count");
+        if (cJSON_IsNumber(v)) s_config.gps_stationary_count = (int)v->valuedouble;
     }
 
     cJSON *esc = cJSON_GetObjectItem(root, "escalate");

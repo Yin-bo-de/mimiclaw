@@ -1,6 +1,7 @@
 #include "tools/tool_nav.h"
 #include "nav/nav_situation.h"
 #include "nav/nav_config.h"
+#include "nav/nav_gps_filter.h"
 #include "nav/nav_waypoints.h"
 #include "nav/nav_planner.h"
 #include "nav/nav_controller.h"
@@ -38,6 +39,12 @@ esp_err_t tool_nav_init(void)
     err = nav_config_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nav_config_init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nav_gps_filter_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nav_gps_filter_init failed: %s", esp_err_to_name(err));
         return err;
     }
 

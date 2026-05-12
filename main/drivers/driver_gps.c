@@ -1,6 +1,7 @@
 #include "driver_gps.h"
 #include "sensor_config.h"
 #include "nav/nav_situation.h"
+#include "nav/nav_gps_filter.h"
 #include "tools/gpio_policy.h"
 #include "mimi_config.h"
 
@@ -114,43 +115,51 @@ static void parse_gprmc(char *line)
     /* Field 2: Status (A = valid, V = invalid) */
     bool fix_valid = (fields[2][0] == 'A');
 
-    /* Only update if we have a valid fix */
-    if (!fix_valid) {
-        return;
-    }
-
-    /* Lock the reading */
+    /* Update raw reading (even when invalid, to track loss) */
     if (xSemaphoreTake(s_reading_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        /* Field 3: Latitude */
-        if (fields[3][0] != '\0') {
-            s_reading.latitude = parse_lat_lon(fields[3], fields[4][0]);
+        s_reading.fix_valid = fix_valid;
+
+        if (fix_valid) {
+            /* Field 3: Latitude */
+            if (fields[3][0] != '\0') {
+                s_reading.latitude = parse_lat_lon(fields[3], fields[4][0]);
+            }
+
+            /* Field 5: Longitude */
+            if (fields[5][0] != '\0') {
+                s_reading.longitude = parse_lat_lon(fields[5], fields[6][0]);
+            }
+
+            /* Field 7: Speed (knots to m/s) */
+            if (fields[7][0] != '\0') {
+                s_reading.speed_mps = parse_double(fields[7]) * 0.514444;
+            }
+
+            /* Field 8: Course (degrees) */
+            if (fields[8][0] != '\0') {
+                s_reading.course_deg = parse_double(fields[8]);
+            }
         }
 
-        /* Field 5: Longitude */
-        if (fields[5][0] != '\0') {
-            s_reading.longitude = parse_lat_lon(fields[5], fields[6][0]);
-        }
-
-        /* Field 7: Speed (knots to m/s) */
-        if (fields[7][0] != '\0') {
-            s_reading.speed_mps = parse_double(fields[7]) * 0.514444;
-        }
-
-        /* Field 8: Course (degrees) */
-        if (fields[8][0] != '\0') {
-            s_reading.course_deg = parse_double(fields[8]);
-        }
-
-        s_reading.fix_valid = true;
         s_reading.timestamp_us = esp_timer_get_time();
         xSemaphoreGive(s_reading_mutex);
     }
 
-    nav_situation_update_gps(
-        s_reading.latitude, s_reading.longitude,
-        s_reading.fix_valid, s_reading.satellites,
-        s_reading.speed_mps, s_reading.course_deg
-    );
+    /* Push through Kalman filter (even when fix_valid=false so filter
+     * can run predict-only and degrade gps_fix downstream correctly). */
+    nav_gps_obs_t obs = {
+        .lat        = s_reading.latitude,
+        .lon        = s_reading.longitude,
+        .speed_mps  = s_reading.speed_mps,
+        .course_deg = s_reading.course_deg,
+        .sats       = s_reading.satellites,
+        .fix_valid  = fix_valid,
+        .ts_us      = esp_timer_get_time(),
+    };
+    nav_gps_filtered_t f;
+    nav_gps_filter_update(&obs, &f);
+    nav_situation_update_gps(f.lat, f.lon, f.fix, f.sats,
+                             f.speed_mps, f.course_deg);
 }
 
 /* Parse GPGGA sentence */
@@ -182,12 +191,8 @@ static void parse_gpgga(char *line)
         s_reading.timestamp_us = esp_timer_get_time();
         xSemaphoreGive(s_reading_mutex);
     }
-
-    nav_situation_update_gps(
-        s_reading.latitude, s_reading.longitude,
-        s_reading.fix_valid, s_reading.satellites,
-        s_reading.speed_mps, s_reading.course_deg
-    );
+    /* GGA only updates metadata (sats, fix_quality, altitude).
+     * nav_situation is driven exclusively by GPRMC via the Kalman filter. */
 }
 
 /* Process a complete NMEA line */

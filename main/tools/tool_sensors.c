@@ -3,6 +3,7 @@
 #include "drivers/driver_imu.h"
 #include "drivers/driver_gps.h"
 #include "drivers/sensor_config.h"
+#include "nav/nav_gps_filter.h"
 
 #include "tools/tool_registry.h"
 #include "mimi_config.h"
@@ -319,17 +320,25 @@ esp_err_t tool_read_gps_execute(const char *input_json, char *output, size_t out
 {
     (void)input_json;
     gps_reading_t r = driver_gps_get_reading();
-    int64_t age_ms  = (esp_timer_get_time() - r.timestamp_us) / 1000;
+    nav_gps_filtered_t f;
+    nav_gps_filter_get_last(&f);
+
+    int64_t raw_age_ms  = (esp_timer_get_time() - r.timestamp_us) / 1000;
+    int64_t filt_age_ms = (esp_timer_get_time() - f.ts_us) / 1000;
 
     snprintf(output, output_size,
-             "{\"lat\":%.6f,\"lon\":%.6f,"
-             "\"fix\":%s,\"sats\":%d,"
+             "{\"raw\":{\"lat\":%.6f,\"lon\":%.6f,\"fix\":%s,\"sats\":%d,"
+             "\"speed_mps\":%.2f,\"course_deg\":%.1f,\"age_ms\":%lld},"
+             "\"filt\":{\"lat\":%.6f,\"lon\":%.6f,\"fix\":%s,\"sats\":%d,"
              "\"speed_mps\":%.2f,\"course_deg\":%.1f,"
-             "\"age_ms\":%lld}",
+             "\"quality\":%d,\"age_ms\":%lld}}",
              r.latitude, r.longitude,
              r.fix_valid ? "true" : "false",
-             r.satellites,
-             r.speed_mps, r.course_deg,
-             (long long)age_ms);
+             r.satellites, r.speed_mps, r.course_deg,
+             (long long)raw_age_ms,
+             f.lat, f.lon,
+             f.fix ? "true" : "false",
+             f.sats, f.speed_mps, f.course_deg,
+             f.quality, (long long)filt_age_ms);
     return ESP_OK;
 }

@@ -15,6 +15,7 @@
 #include "drivers/driver_ultrasonic.h"
 #include "drivers/driver_imu.h"
 #include "drivers/driver_gps.h"
+#include "nav/nav_gps_filter.h"
 #include "nav/nav_controller.h"
 #include "nav/nav_l1_reflex.h"
 #include "cron/cron_service.h"
@@ -913,6 +914,33 @@ static int cmd_gps_nmea(int argc, char **argv)
     return 0;
 }
 
+/* --- gps_filt_stats command --- */
+static int cmd_gps_filt_stats(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    nav_gps_filter_stats_t s;
+    nav_gps_filter_get_stats(&s);
+    printf("GPS filter stats:\n");
+    printf("  initialized    : %s\n",  s.initialized ? "yes" : "no");
+    printf("  origin         : %.6f, %.6f\n", s.origin_lat, s.origin_lon);
+    printf("  total_obs      : %lu\n", (unsigned long)s.total_obs);
+    printf("  accepted       : %lu\n", (unsigned long)s.accepted);
+    printf("  weakened       : %lu\n", (unsigned long)s.weakened);
+    printf("  rejected       : %lu\n", (unsigned long)s.rejected);
+    printf("  predict_streak : %lu\n", (unsigned long)s.predict_only_streak);
+    printf("  stationary     : %s\n",  s.stationary ? "yes" : "no");
+    return 0;
+}
+
+/* --- gps_filt_reset command --- */
+static int cmd_gps_filt_reset(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    nav_gps_filter_reset();
+    printf("GPS Kalman filter reset.\n");
+    return 0;
+}
+
 /* --- cron_start command --- */
 static int cmd_cron_start(int argc, char **argv)
 {
@@ -1530,6 +1558,22 @@ esp_err_t serial_cli_init(void)
         .argtable = &gps_nmea_args,
     };
     esp_console_cmd_register(&gps_nmea_cmd);
+
+    /* gps_filt_stats */
+    esp_console_cmd_t gps_filt_stats_cmd = {
+        .command = "gps_filt_stats",
+        .help    = "Print GPS Kalman filter statistics (accepted/weakened/rejected/streak/origin)",
+        .func    = &cmd_gps_filt_stats,
+    };
+    esp_console_cmd_register(&gps_filt_stats_cmd);
+
+    /* gps_filt_reset */
+    esp_console_cmd_t gps_filt_reset_cmd = {
+        .command = "gps_filt_reset",
+        .help    = "Reset GPS Kalman filter state and ENU origin",
+        .func    = &cmd_gps_filt_reset,
+    };
+    esp_console_cmd_register(&gps_filt_reset_cmd);
 
     /* tool_exec */
     esp_console_cmd_t tool_exec_cmd = {

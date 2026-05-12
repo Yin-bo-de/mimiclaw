@@ -650,3 +650,74 @@ Backtrace: ... nav_situation_update_distances ... ultrasonic_task
 
 **产出文件清单：**
 - 修改：`main/nav/nav_situation.c`
+
+---
+
+## GPS Kalman 滤波 + 卫星数置信权重 (2026-05-12)
+
+**背景：** 导航算法直接消费原始 NMEA 坐标，在卫星数低（<6）时位置抖动被 L2 FSM 放大，导致错乱转向、虚假到达触发、AVOID 评分偏差。此外发现一个隐性 bug：`parse_gprmc` 在 `fix_valid=false` 时直接 return，导致 `nav_situation.gps_fix` 永远停在 true，下游无法感知 GPS 丢失。
+
+**修复内容：**
+
+1. **新增 GPS 滤波模块 (`nav/nav_gps_filter.{h,c}`)**
+   - 2D 恒速 Kalman（CV 模型，状态 `[px, py, vx, vy]`）
+   - 局部 ENU 投影（以首次有效 fix 为原点，避免浮点精度问题）
+   - 观测噪声 R 随卫星数动态调整（宽松档）：
+     - sats ≥ 7 → R_base（σ≈2m）
+     - sats 5~6 → R×3
+     - sats = 4 → R×12（弱更新）
+     - sats < 4 或 fix_valid=false → 拒绝观测，仅预测
+   - 速度 EWMA（α=0.4）+ 航向 EWMA（含 unwrap，α=0.3）
+   - 静止钳制（stationary clamp）：连续 3 次 speed < 0.3 m/s → 强制 vx/vy=0，防 CV 模型停车漂移
+   - 降级机制：连续 8 次纯预测或 >5s 无接受观测 → `filtered.fix=false` + vx/vy 清零
+   - 日志仅在状态边沿（首次原点、卫星跨档、进出 stationary、降级/恢复）打 INFO/WARN
+
+2. **Bug 修复：`parse_gprmc` fix 丢失不可见问题**
+   - 删除 `if (!fix_valid) return;` 硬跳出
+   - fix_valid=false 时仍推入 filter（走"仅预测"分支），filter 输出的 `f.fix` 正确降级到 false，下游 `nav_situation.gps_fix` 终于能反映真实丢失状态
+
+3. **GPGGA 重复写入优化**
+   - 删除 `parse_gpgga` 末尾的 `nav_situation_update_gps` 调用
+   - 让 GPRMC 作为唯一驱动源，避免每秒两次写入带来的抖动叠加
+
+4. **配置体系接入 (`nav/nav_config.{h,c}` + `spiffs_data/config/nav.json`)**
+   - `nav_config_t` 新增 10 个 `gps_*` 字段
+   - `nav.json` 新增 `gps_filter` 段，可在线调整 σ_pos、σ_a、EWMA alpha、卫星阈值、超时时长
+
+5. **初始化接入 (`tools/tool_nav.c`)**
+   - `nav_config_init()` 之后调用 `nav_gps_filter_init()`，保证读到配置
+
+6. **调试增强**
+   - `tool_read_gps`（`tool_sensors.c`）返回 `raw` + `filt` 两块 JSON，方便联调对比抖动幅度
+   - 串口 CLI 新增 `gps_filt_stats`（打印 accepted/weakened/rejected/streak/origin/stationary）
+   - 串口 CLI 新增 `gps_filt_reset`（重置 Kalman 状态和 ENU 原点）
+
+**数据流变化：**
+```
+[旧] driver_gps → nav_situation_update_gps（raw 直通）
+[新] driver_gps → nav_gps_filter_update → nav_situation_update_gps（已滤波）
+```
+`nav_l2_fsm.c`、`nav_situation.c` 均未改动，透明受益。
+
+**验收测试：**
+```bash
+# 构建烧录
+idf.py build && idf.py -p /dev/cu.usbmodem21201 flash monitor
+
+# 静置稳定性：静置 5 分钟，filt 坐标抖动应 < raw 的 1/3
+gps_filt_stats                # 看 accepted 递增、stationary=yes
+tool_exec read_gps {}         # 对比 raw / filt 坐标差
+
+# 遮挡降级测试：遮挡天线 10s
+# 期望：卫星数跨档 INFO → streak WARN → >5s 后 fix=false WARN → 解除后 INFO 恢复
+
+# Bug 修复回归：不接 GPS 模块时发起导航
+# 期望：fsm_cruise 走 !gps_fix 分支（steer=0），不再沿错误 bearing 行驶
+```
+
+**产出文件清单：**
+- 新增：`main/nav/nav_gps_filter.{h,c}`
+- 修改：`main/nav/nav_config.{h,c}` `main/drivers/driver_gps.c`
+         `main/tools/tool_nav.c` `main/tools/tool_sensors.c`
+         `main/cli/serial_cli.c` `main/CMakeLists.txt`
+         `spiffs_data/config/nav.json`
