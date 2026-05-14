@@ -1,4 +1,5 @@
 #include "serial_cli.h"
+#include "log/spiffs_log.h"
 #include "mimi_config.h"
 #include "wifi/wifi_manager.h"
 #if MIMI_TELEGRAM_CONFIG_SECTION
@@ -1176,6 +1177,62 @@ static int cmd_ota_update(int argc, char **argv)
     return 1;
 }
 
+/* --- log_list command --- */
+static int cmd_log_list(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    spiffs_log_list();
+    return 0;
+}
+
+/* --- log_read command --- */
+static struct {
+    struct arg_str *filename;
+    struct arg_end *end;
+} log_read_args;
+
+static int cmd_log_read(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&log_read_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, log_read_args.end, argv[0]);
+        return 1;
+    }
+    return spiffs_log_read(log_read_args.filename->sval[0]) == ESP_OK ? 0 : 1;
+}
+
+/* --- log_delete command --- */
+static struct {
+    struct arg_str *filename;
+    struct arg_end *end;
+} log_delete_args;
+
+static int cmd_log_delete(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&log_delete_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, log_delete_args.end, argv[0]);
+        return 1;
+    }
+    return spiffs_log_delete(log_delete_args.filename->sval[0]) == ESP_OK ? 0 : 1;
+}
+
+/* --- log_clear command --- */
+static int cmd_log_clear(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    spiffs_log_clear();
+    return 0;
+}
+
+/* --- log_status command --- */
+static int cmd_log_status(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    spiffs_log_status();
+    return 0;
+}
+
 /* --- restart command --- */
 static int cmd_restart(int argc, char **argv)
 {
@@ -1604,6 +1661,54 @@ esp_err_t serial_cli_init(void)
         .argtable = &ota_update_args,
     };
     esp_console_cmd_register(&ota_update_cmd);
+
+    /* log_list */
+    esp_console_cmd_t log_list_cmd = {
+        .command = "log_list",
+        .help    = "List all SPIFFS log files with sizes",
+        .func    = &cmd_log_list,
+    };
+    esp_console_cmd_register(&log_list_cmd);
+
+    /* log_read */
+    log_read_args.filename = arg_str1(NULL, NULL, "<file>",
+                                     "Log filename, e.g. run_0001.log");
+    log_read_args.end = arg_end(1);
+    esp_console_cmd_t log_read_cmd = {
+        .command  = "log_read",
+        .help     = "Print a log file to serial: log_read run_0001.log",
+        .func     = &cmd_log_read,
+        .argtable = &log_read_args,
+    };
+    esp_console_cmd_register(&log_read_cmd);
+
+    /* log_delete */
+    log_delete_args.filename = arg_str1(NULL, NULL, "<file>",
+                                       "Log filename to delete, e.g. run_0001.log");
+    log_delete_args.end = arg_end(1);
+    esp_console_cmd_t log_delete_cmd = {
+        .command  = "log_delete",
+        .help     = "Delete a specific log file: log_delete run_0001.log",
+        .func     = &cmd_log_delete,
+        .argtable = &log_delete_args,
+    };
+    esp_console_cmd_register(&log_delete_cmd);
+
+    /* log_clear */
+    esp_console_cmd_t log_clear_cmd = {
+        .command = "log_clear",
+        .help    = "Delete ALL log files and free SPIFFS space",
+        .func    = &cmd_log_clear,
+    };
+    esp_console_cmd_register(&log_clear_cmd);
+
+    /* log_status */
+    esp_console_cmd_t log_status_cmd = {
+        .command = "log_status",
+        .help    = "Show SPIFFS usage and current log file info",
+        .func    = &cmd_log_status,
+    };
+    esp_console_cmd_register(&log_status_cmd);
 
     /* restart */
     esp_console_cmd_t restart_cmd = {

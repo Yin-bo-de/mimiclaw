@@ -30,6 +30,7 @@
 #include "skills/skill_loader.h"
 #include "onboard/wifi_onboard.h"
 #include "nav/nav_controller.h"
+#include "log/spiffs_log.h"
 
 static const char *TAG = "mimi";
 
@@ -128,6 +129,7 @@ void app_main(void)
     ESP_ERROR_CHECK(init_nvs());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(init_spiffs());
+    ESP_ERROR_CHECK(spiffs_log_init());
 
     /* Initialize subsystems */
     ESP_ERROR_CHECK(message_bus_init());

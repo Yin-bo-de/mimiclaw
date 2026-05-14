@@ -167,6 +167,14 @@
 #define MIMI_NVS_PROXY               "proxy_config"
 #define MIMI_NVS_SEARCH              "search_config"
 
+/* Logging to SPIFFS */
+#define MIMI_LOG_DIR              MIMI_SPIFFS_BASE "/logs"
+#define MIMI_LOG_MAX_FILE_BYTES   (512 * 1024)
+#define MIMI_LOG_MAX_FILES        10
+#define MIMI_LOG_SPIFFS_FULL_PCT  85
+#define MIMI_NVS_LOG              "log_config"
+#define MIMI_NVS_KEY_BOOT_CNT     "boot_cnt"
+
 /* NVS Keys */
 #define MIMI_NVS_KEY_SSID            "ssid"
 #define MIMI_NVS_KEY_PASS            "password"

@@ -229,6 +229,20 @@ mimi> ota_update https://...   # OTA firmware update over WiFi (reboots on succe
 mimi> restart                  # reboot
 ```
 
+**Offline logs (SPIFFS local storage):**
+
+MimiClaw automatically saves all runtime logs to SPIFFS on every boot — no computer needed. Come back, plug in USB, and read them with:
+
+```
+mimi> log_list                   # list all log files with sizes (* = active)
+mimi> log_status                 # show SPIFFS space usage
+mimi> log_read run_0003.log      # print a log file to serial
+mimi> log_delete run_0001.log    # delete a specific log file
+mimi> log_clear                  # delete all logs and resume fresh logging
+```
+
+Logs are saved as `/spiffs/logs/run_XXXX.log`, numbered by boot count. Max 512 KB per file; oldest log is auto-evicted when SPIFFS usage exceeds 85%.
+
 ### USB (JTAG) vs UART: Which Port for What
 
 Most ESP32-S3 dev boards expose **two USB-C ports**:

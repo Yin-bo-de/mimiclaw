@@ -229,6 +229,20 @@ mimi> ota_update https://...   # WiFi OTA 固件更新（成功后自动重启�
 mimi> restart                  # 重启
 ```
 
+**离线日志（SPIFFS 本地存储）：**
+
+MimiClaw 每次启动都会自动将所有运行日志写入 SPIFFS，无需连接电脑。回来后插上 USB，通过以下命令查阅：
+
+```
+mimi> log_list                   # 列出所有日志文件及大小，* 标注当前活跃文件
+mimi> log_status                 # 查看 SPIFFS 空间用量
+mimi> log_read run_0003.log      # 将指定日志文件内容打印到串口
+mimi> log_delete run_0001.log    # 删除指定日志文件
+mimi> log_clear                  # 删除全部日志，立即重新开始记录
+```
+
+日志文件保存在 `/spiffs/logs/run_XXXX.log`，按启动次数自动编号。单文件上限 512 KB；SPIFFS 使用率超过 85% 时自动删除最旧的日志。
+
 ### USB（JTAG）与 UART：哪个口做什么
 
 大多数 ESP32-S3 开发板有 **两个 USB-C 口**：

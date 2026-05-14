@@ -46,6 +46,7 @@ idf_component_register(
         "nav/nav_escalate.c"
         "nav/nav_controller.c"
         "tools/tool_nav.c"
+        "log/spiffs_log.c"
     INCLUDE_DIRS
         "."
     REQUIRES
