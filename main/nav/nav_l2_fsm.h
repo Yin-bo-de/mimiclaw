@@ -8,7 +8,8 @@ extern "C" {
 #endif
 
 typedef enum {
-    L2_CRUISE = 0,
+    L2_YAW_BOOTSTRAP = 0, /* GPS COG alignment before first CRUISE */
+    L2_CRUISE,
     L2_AVOID_LEFT,
     L2_AVOID_RIGHT,
     L2_REVERSE,

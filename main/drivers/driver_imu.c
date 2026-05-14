@@ -452,6 +452,27 @@ imu_reading_t driver_imu_get_reading(void)
     return result;
 }
 
+void driver_imu_set_yaw(float deg)
+{
+    while (deg >= 360.0f) deg -= 360.0f;
+    while (deg <    0.0f) deg += 360.0f;
+
+    /* Update integration base so future gyro cycles start from the aligned value */
+    s_yaw = deg;
+
+    /* Immediately publish so consumers don't see a stale value before next imu_update */
+    if (s_mutex) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_latest_reading.yaw_deg = deg;
+        xSemaphoreGive(s_mutex);
+    }
+
+    ESP_LOGI(TAG, "yaw forced to %.1f° (GPS COG bootstrap)", deg);
+
+    /* Also push to nav_situation immediately */
+    nav_situation_update_imu(s_latest_reading.roll_deg, s_latest_reading.pitch_deg, deg, s_latest_reading.gyro_dps[2]);
+}
+
 esp_err_t driver_imu_calibrate_gyro(void)
 {
     if (!s_initialized) {

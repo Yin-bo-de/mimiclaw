@@ -6,6 +6,7 @@
 #include "nav/nav_l1_reflex.h"
 #include "nav/nav_escalate.h"
 #include "tools/tool_pwm.h"
+#include "drivers/driver_imu.h"
 #include "mimi_config.h"
 
 #include "freertos/FreeRTOS.h"
@@ -57,15 +58,16 @@ static int64_t s_trip_start_us = 0; /* set when trip begins, used by ARRIVED esc
 const char *nav_l2_state_name(l2_state_t s)
 {
     switch (s) {
-    case L2_CRUISE:      return "CRUISE";
-    case L2_AVOID_LEFT:  return "AVOID_LEFT";
-    case L2_AVOID_RIGHT: return "AVOID_RIGHT";
-    case L2_REVERSE:     return "REVERSE";
-    case L2_REPLAN:      return "REPLAN";
-    case L2_PAUSED:      return "PAUSED";
-    case L2_ARRIVED:     return "ARRIVED";
-    case L2_FAULT:       return "FAULT";
-    default:             return "UNKNOWN";
+    case L2_YAW_BOOTSTRAP: return "YAW_BOOTSTRAP";
+    case L2_CRUISE:        return "CRUISE";
+    case L2_AVOID_LEFT:    return "AVOID_LEFT";
+    case L2_AVOID_RIGHT:   return "AVOID_RIGHT";
+    case L2_REVERSE:       return "REVERSE";
+    case L2_REPLAN:        return "REPLAN";
+    case L2_PAUSED:        return "PAUSED";
+    case L2_ARRIVED:       return "ARRIVED";
+    case L2_FAULT:         return "FAULT";
+    default:               return "UNKNOWN";
     }
 }
 
@@ -177,6 +179,129 @@ static void enter_state(l2_state_t new_state)
     }
     s_state          = new_state;
     s_state_enter_us = esp_timer_get_time();
+}
+
+/* ------------------------------------------------------------------ */
+/*  YAW_BOOTSTRAP — GPS COG heading alignment                           */
+/* ------------------------------------------------------------------ */
+
+#define BOOTSTRAP_MIN_DIST_M       3.0f   /* travel at least 3 m before sampling */
+#define BOOTSTRAP_MAX_DIST_M      10.0f   /* give up if no stable COG within 10 m */
+#define BOOTSTRAP_TIMEOUT_MS   10000LL    /* hard timeout (ms) */
+#define BOOTSTRAP_MIN_SPEED_MPS    0.3f   /* GPS must show movement */
+#define BOOTSTRAP_COG_WINDOW          5   /* circular buffer size for stability check */
+#define BOOTSTRAP_COG_MAX_DEV_DEG  5.0f   /* max angular deviation from mean = "stable" */
+
+static double s_boot_start_lat  = 0.0;
+static double s_boot_start_lon  = 0.0;
+static bool   s_boot_pos_saved  = false;
+static float  s_cog_buf[BOOTSTRAP_COG_WINDOW];
+static int    s_cog_buf_head    = 0;
+static int    s_cog_buf_cnt     = 0;
+
+static void bootstrap_reset(void)
+{
+    s_boot_start_lat = 0.0;
+    s_boot_start_lon = 0.0;
+    s_boot_pos_saved = false;
+    s_cog_buf_head   = 0;
+    s_cog_buf_cnt    = 0;
+}
+
+static void fsm_yaw_bootstrap(const nav_situation_t *sit, const nav_config_t *cfg)
+{
+    /* Drive straight — avoidance logic skipped; L1 reflex still blocks throttle */
+    rc_nav_steer(0);
+    if (!nav_l1_is_blocked()) {
+        rc_nav_throttle(s_cruise_speed);
+    }
+
+    int64_t elapsed_ms = (esp_timer_get_time() - s_state_enter_us) / 1000LL;
+
+    if (elapsed_ms >= BOOTSTRAP_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "[bootstrap] timeout %lldms — FAULT", (long long)elapsed_ms);
+        nav_escalate_aborted(sit, "bootstrap_timeout", 0.0);
+        enter_state(L2_FAULT);
+        rc_nav_throttle(0);
+        rc_nav_steer(0);
+        return;
+    }
+
+    if (!sit->gps_fix) return;
+
+    if (!s_boot_pos_saved) {
+        s_boot_start_lat = sit->lat;
+        s_boot_start_lon = sit->lon;
+        s_boot_pos_saved = true;
+        ESP_LOGI(TAG, "[bootstrap] origin=(%.6f, %.6f)", sit->lat, sit->lon);
+    }
+
+    double dist = nav_planner_distance_m(s_boot_start_lat, s_boot_start_lon,
+                                          sit->lat, sit->lon);
+
+    if (dist > BOOTSTRAP_MAX_DIST_M) {
+        ESP_LOGE(TAG, "[bootstrap] %.1fm traveled, COG never stable — FAULT", dist);
+        nav_escalate_aborted(sit, "bootstrap_no_cog", 0.0);
+        enter_state(L2_FAULT);
+        rc_nav_throttle(0);
+        rc_nav_steer(0);
+        return;
+    }
+
+    if (dist >= BOOTSTRAP_MIN_DIST_M && sit->speed_mps >= BOOTSTRAP_MIN_SPEED_MPS) {
+        /* Accumulate COG into circular buffer */
+        s_cog_buf[s_cog_buf_head] = (float)sit->course_deg;
+        s_cog_buf_head = (s_cog_buf_head + 1) % BOOTSTRAP_COG_WINDOW;
+        if (s_cog_buf_cnt < BOOTSTRAP_COG_WINDOW) s_cog_buf_cnt++;
+
+        if (s_cog_buf_cnt >= BOOTSTRAP_COG_WINDOW) {
+            /* Circular mean */
+            float sum_sin = 0.0f, sum_cos = 0.0f;
+            for (int i = 0; i < BOOTSTRAP_COG_WINDOW; i++) {
+                float r = s_cog_buf[i] * ((float)M_PI / 180.0f);
+                sum_sin += sinf(r);
+                sum_cos += cosf(r);
+            }
+            float mean_deg = atan2f(sum_sin, sum_cos) * (180.0f / (float)M_PI);
+            if (mean_deg < 0.0f) mean_deg += 360.0f;
+
+            /* Max angular deviation */
+            float max_dev = 0.0f;
+            for (int i = 0; i < BOOTSTRAP_COG_WINDOW; i++) {
+                float dev = fabsf(s_cog_buf[i] - mean_deg);
+                if (dev > 180.0f) dev = 360.0f - dev;
+                if (dev > max_dev) max_dev = dev;
+            }
+
+            if (max_dev < BOOTSTRAP_COG_MAX_DEV_DEG) {
+                float yaw_pre = sit->yaw_deg;
+                driver_imu_set_yaw(mean_deg);
+                ESP_LOGI(TAG, "[bootstrap] yaw aligned: gps_course=%.1f° yaw_pre=%.1f° offset=%.1f°",
+                         mean_deg, yaw_pre, mean_deg - yaw_pre);
+
+                /* Check if we already overshot the goal during bootstrap run */
+                if (sit->has_goal) {
+                    double dist_rem = nav_planner_distance_m(sit->lat, sit->lon,
+                                                              s_goal_lat, s_goal_lon);
+                    if (dist_rem <= (double)cfg->arrival_radius_m) {
+                        int64_t dur_s = (esp_timer_get_time() - s_trip_start_us) / 1000000LL;
+                        nav_escalate_arrived(sit, dur_s, dist_rem, s_avoid_count);
+                        enter_state(L2_ARRIVED);
+                        rc_nav_throttle(0);
+                        rc_nav_steer(0);
+                        return;
+                    }
+                }
+                enter_state(L2_CRUISE);
+                return;
+            }
+
+            ESP_LOGD(TAG, "[bootstrap] COG unstable: mean=%.1f° dev=%.1f° dist=%.1fm",
+                     mean_deg, max_dev, dist);
+        }
+    } else {
+        ESP_LOGD(TAG, "[bootstrap] waiting: dist=%.1fm speed=%.2f m/s", dist, sit->speed_mps);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -363,7 +488,8 @@ static void l2_task(void *arg)
     /* Reset FSM on fresh start */
     s_avoid_count  = 0;
     s_replan_count = 0;
-    enter_state(L2_CRUISE);
+    bootstrap_reset();
+    enter_state(L2_YAW_BOOTSTRAP);
 
     while (s_running) {
         nav_situation_t sit;
@@ -400,17 +526,19 @@ static void l2_task(void *arg)
             case L2_CMD_NEW_GOAL:
                 s_avoid_count  = 0;
                 s_replan_count = 0;
-                enter_state(L2_CRUISE);
+                bootstrap_reset();
+                enter_state(L2_YAW_BOOTSTRAP);
                 break;
             default:
                 break;
             }
         }
 
-        /* Sensor staleness guard (not in terminal / paused states) */
+        /* Sensor staleness guard (not in terminal / paused / bootstrap states) */
         if (s_state != L2_PAUSED &&
             s_state != L2_ARRIVED &&
-            s_state != L2_FAULT) {
+            s_state != L2_FAULT   &&
+            s_state != L2_YAW_BOOTSTRAP) {
             if (!sensors_ok(&sit)) {
                 ESP_LOGE(TAG, "Sensor stale — FAULT");
                 nav_escalate_aborted(&sit, "sensors_lost", 0.0);
@@ -422,6 +550,9 @@ static void l2_task(void *arg)
 
         /* Run current state */
         switch (s_state) {
+        case L2_YAW_BOOTSTRAP:
+            fsm_yaw_bootstrap(&sit, cfg);
+            break;
         case L2_CRUISE:
             fsm_cruise(&sit, cfg);
             break;
@@ -475,6 +606,7 @@ esp_err_t nav_l2_init(void)
 {
     nav_memory_init();
     nav_escalate_init();
+    bootstrap_reset();
     s_state         = L2_FAULT;
     s_running       = false;
     s_cmd           = L2_CMD_NONE;

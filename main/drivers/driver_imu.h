@@ -34,6 +34,13 @@ imu_reading_t driver_imu_get_reading(void);
 /* Calibrate gyroscope bias (blocks for ~5 seconds) */
 esp_err_t driver_imu_calibrate_gyro(void);
 
+/**
+ * Force yaw to a known compass bearing (deg, 0=North CW+).
+ * Used by nav bootstrap to align gyro-integrated yaw with GPS COG.
+ * Thread-safe; takes effect on the next IMU update cycle (~10 ms).
+ */
+void driver_imu_set_yaw(float deg);
+
 #ifdef __cplusplus
 }
 #endif
