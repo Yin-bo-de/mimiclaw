@@ -14,5 +14,15 @@
   },
   "gps": {
     "uart_port": 1, "rx_gpio": 17, "tx_gpio": 18, "baudrate": 9600
+  },
+  "magnetometer": {
+    "i2c_port": 0,
+    "address": "0x1E",
+    "enabled": true,
+    "declination_deg": 0.0,
+    "x_inverted": false,
+    "y_inverted": false,
+    "offset_x": 0.0,
+    "offset_y": 0.0
   }
 }
