@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 typedef enum {
-    L2_YAW_BOOTSTRAP = 0, /* GPS COG alignment before first CRUISE */
+    L2_YAW_BOOTSTRAP = 0, /* Deprecated: magnetometer now provides absolute heading */
     L2_CRUISE,
     L2_AVOID_LEFT,
     L2_AVOID_RIGHT,

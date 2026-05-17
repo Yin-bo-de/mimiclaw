@@ -16,6 +16,7 @@
 #include "drivers/driver_ultrasonic.h"
 #include "drivers/driver_imu.h"
 #include "drivers/driver_gps.h"
+#include "drivers/sensor_config.h"
 #include "nav/nav_gps_filter.h"
 #include "nav/nav_controller.h"
 #include "nav/nav_l1_reflex.h"
@@ -1241,6 +1242,62 @@ static int cmd_restart(int argc, char **argv)
     return 0;  /* unreachable */
 }
 
+/* --- mag_status command --- */
+static int cmd_mag_status(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    mag_status_t st = driver_imu_get_mag_status();
+    if (!st.online) {
+        printf("Magnetometer: OFFLINE (not detected or init failed)\n");
+        return 1;
+    }
+    printf("Magnetometer: ONLINE\n");
+    printf("  Raw:      X=%.1f mG, Y=%.1f mG, Z=%.1f mG\n", st.raw_x, st.raw_y, st.raw_z);
+    printf("  Heading:  %.1f° (declination=%.1f°)\n", st.heading_deg, st.declination_deg);
+    printf("  Offset:   X=%.1f, Y=%.1f\n", st.offset_x, st.offset_y);
+    return 0;
+}
+
+/* --- mag_cal command --- */
+static int cmd_mag_cal(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    printf("Starting magnetometer calibration...\n");
+    printf("Keep the vehicle LEVEL and slowly rotate it 360 degrees (takes ~15s).\n");
+    esp_err_t err = driver_imu_calibrate_mag();
+    if (err == ESP_OK) {
+        printf("Calibration complete. Offset saved to sensors.json.\n");
+    } else {
+        printf("Calibration failed: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+    return 0;
+}
+
+/* --- mag_decl command --- */
+static struct {
+    struct arg_dbl *deg;
+    struct arg_end *end;
+} mag_decl_args;
+
+static int cmd_mag_decl(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&mag_decl_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, mag_decl_args.end, argv[0]);
+        return 1;
+    }
+    float decl = (float)mag_decl_args.deg->dval[0];
+    esp_err_t err = sensor_config_save_mag_declination(decl);
+    if (err == ESP_OK) {
+        printf("Magnetic declination set to %.1f degrees. Restart to apply.\n", decl);
+    } else {
+        printf("Failed to save: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+    return 0;
+}
+
 esp_err_t serial_cli_init(void)
 {
     esp_console_repl_t *repl = NULL;
@@ -1717,6 +1774,33 @@ esp_err_t serial_cli_init(void)
         .func = &cmd_restart,
     };
     esp_console_cmd_register(&restart_cmd);
+
+    /* mag_status */
+    esp_console_cmd_t mag_status_cmd = {
+        .command = "mag_status",
+        .help = "Show HMC5883L magnetometer status and heading",
+        .func = &cmd_mag_status,
+    };
+    esp_console_cmd_register(&mag_status_cmd);
+
+    /* mag_cal */
+    esp_console_cmd_t mag_cal_cmd = {
+        .command = "mag_cal",
+        .help = "Calibrate magnetometer hard-iron offset (rotate 360°)",
+        .func = &cmd_mag_cal,
+    };
+    esp_console_cmd_register(&mag_cal_cmd);
+
+    /* mag_decl */
+    mag_decl_args.deg = arg_dbl1(NULL, NULL, "<deg>", "Magnetic declination in degrees (negative for west)");
+    mag_decl_args.end = arg_end(1);
+    esp_console_cmd_t mag_decl_cmd = {
+        .command = "mag_decl",
+        .help = "Set magnetic declination: mag_decl -7.0",
+        .func = &cmd_mag_decl,
+        .argtable = &mag_decl_args,
+    };
+    esp_console_cmd_register(&mag_decl_cmd);
 
     /* Start REPL */
     ESP_ERROR_CHECK(esp_console_start_repl(repl));

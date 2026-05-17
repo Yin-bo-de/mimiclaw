@@ -53,6 +53,27 @@ const imu_config_t *sensor_config_get_imu(void);
 /* Get GPS config */
 const gps_config_t *sensor_config_get_gps(void);
 
+/* Magnetometer (HMC5883L) config */
+typedef struct {
+    int i2c_port;          /* shared with MPU6050, default 0 */
+    uint8_t address;       /* default 0x1E */
+    bool enabled;          /* default true */
+    float declination_deg; /* magnetic declination, default 0 */
+    bool x_inverted;       /* flip X axis sign */
+    bool y_inverted;       /* flip Y axis sign */
+    float offset_x;        /* hard-iron offset X */
+    float offset_y;        /* hard-iron offset Y */
+    bool loaded;
+} magnetometer_config_t;
+
+const magnetometer_config_t *sensor_config_get_magnetometer(void);
+
+/* Save magnetometer hard-iron offset to sensors.json */
+esp_err_t sensor_config_save_mag_offset(float offset_x, float offset_y);
+
+/* Save magnetometer declination to sensors.json */
+esp_err_t sensor_config_save_mag_declination(float declination_deg);
+
 /* Load sensors.json config from SPIFFS */
 esp_err_t sensor_config_load(void);
 

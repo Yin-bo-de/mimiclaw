@@ -41,6 +41,26 @@ esp_err_t driver_imu_calibrate_gyro(void);
  */
 void driver_imu_set_yaw(float deg);
 
+/* Magnetometer (HMC5883L) status */
+typedef struct {
+    bool online;
+    float raw_x;
+    float raw_y;
+    float raw_z;
+    float heading_deg;   /* 0=North CW+, after declination & offset */
+    float declination_deg;
+    float offset_x;
+    float offset_y;
+} mag_status_t;
+
+mag_status_t driver_imu_get_mag_status(void);
+
+/**
+ * Calibrate magnetometer hard-iron offset.
+ * Keep board level and slowly rotate 360° during the ~15s window.
+ */
+esp_err_t driver_imu_calibrate_mag(void);
+
 #ifdef __cplusplus
 }
 #endif

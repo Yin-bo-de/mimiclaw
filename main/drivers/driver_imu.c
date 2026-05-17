@@ -118,9 +118,41 @@ static int64_t s_last_update_us = 0;
 /* Gyro bias (from config) */
 static float s_gyro_bias_dps[3] = {0.0f, 0.0f, 0.0f};
 
-/* I2C handle */
+/* HMC5883L registers */
+#define HMC5883L_REG_CRA            0x00
+#define HMC5883L_REG_CRB            0x01
+#define HMC5883L_REG_MODE           0x02
+#define HMC5883L_REG_DXRA           0x03
+#define HMC5883L_REG_DXRB           0x04
+#define HMC5883L_REG_DZRA           0x05
+#define HMC5883L_REG_DZRB           0x06
+#define HMC5883L_REG_DYRA           0x07
+#define HMC5883L_REG_DYRB           0x08
+#define HMC5883L_REG_STA            0x09
+#define HMC5883L_REG_ID_A           0x0A
+#define HMC5883L_REG_ID_B           0x0B
+#define HMC5883L_REG_ID_C           0x0C
+
+#define HMC5883L_ID_A_VAL           'H'
+#define HMC5883L_ID_B_VAL           '4'
+#define HMC5883L_ID_C_VAL           '3'
+
+#define HMC5883L_GAIN_MG_PER_LSB    0.92f
+
+/* Magnetometer fusion parameters */
+#define MAG_LPF_ALPHA               0.80f
+#define MAG_CORRECTION_GAIN         0.02f
+#define MAG_READ_EVERY_N_CYCLES     2
+
+/* I2C handles */
 static i2c_master_bus_handle_t s_i2c_bus = NULL;
 static i2c_master_dev_handle_t s_i2c_dev = NULL;
+static i2c_master_dev_handle_t s_mag_dev = NULL;
+
+/* Magnetometer state */
+static bool s_mag_available = false;
+static float s_mag_yaw_lpf = 0.0f;
+static int s_mag_read_counter = 0;
 
 /* I2C utility functions */
 static esp_err_t i2c_write_reg(uint8_t reg_addr, uint8_t data)
@@ -201,6 +233,95 @@ static esp_err_t mpu6050_read_raw(const imu_config_t *config, int16_t *accel, in
     return ESP_OK;
 }
 
+/* HMC5883L I2C utilities */
+static esp_err_t i2c_mag_write_reg(uint8_t reg_addr, uint8_t data)
+{
+    uint8_t write_buf[2] = {reg_addr, data};
+    return i2c_master_transmit(s_mag_dev, write_buf, 2, -1);
+}
+
+static esp_err_t i2c_mag_read_reg(uint8_t reg_addr, uint8_t *data, size_t len)
+{
+    return i2c_master_transmit_receive(s_mag_dev, &reg_addr, 1, data, len, -1);
+}
+
+/* HMC5883L initialization */
+static esp_err_t hmc5883l_init(const magnetometer_config_t *config)
+{
+    if (!config || !config->enabled) {
+        ESP_LOGW(TAG, "Magnetometer disabled in config");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Verify ID registers */
+    uint8_t id[3];
+    esp_err_t ret = i2c_mag_read_reg(HMC5883L_REG_ID_A, id, 3);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "HMC5883L ID read failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    if (id[0] != HMC5883L_ID_A_VAL || id[1] != HMC5883L_ID_B_VAL || id[2] != HMC5883L_ID_C_VAL) {
+        ESP_LOGE(TAG, "HMC5883L ID mismatch: expected H43, got %c%c%c", id[0], id[1], id[2]);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    ESP_LOGI(TAG, "HMC5883L detected (ID=%c%c%c)", id[0], id[1], id[2]);
+
+    /* CRA: 8-average, 75Hz, normal measurement mode */
+    ret = i2c_mag_write_reg(HMC5883L_REG_CRA, 0x78);
+    if (ret != ESP_OK) return ret;
+
+    /* CRB: ±1.3 Ga, gain = 0.92 mG/LSB */
+    ret = i2c_mag_write_reg(HMC5883L_REG_CRB, 0x20);
+    if (ret != ESP_OK) return ret;
+
+    /* Mode: continuous measurement */
+    ret = i2c_mag_write_reg(HMC5883L_REG_MODE, 0x00);
+    if (ret != ESP_OK) return ret;
+
+    ESP_LOGI(TAG, "HMC5883L initialized: 75Hz, ±1.3Ga");
+    return ESP_OK;
+}
+
+/* Read HMC5883L raw magnetometer data */
+static esp_err_t hmc5883l_read_raw(int16_t *mag_x, int16_t *mag_y, int16_t *mag_z)
+{
+    uint8_t data[6];
+    esp_err_t ret = i2c_mag_read_reg(HMC5883L_REG_DXRA, data, 6);
+    if (ret != ESP_OK) return ret;
+
+    *mag_x = (int16_t)((data[0] << 8) | data[1]);
+    *mag_z = (int16_t)((data[2] << 8) | data[3]);
+    *mag_y = (int16_t)((data[4] << 8) | data[5]);
+
+    return ESP_OK;
+}
+
+/* Compute compass heading from magnetometer readings */
+static float mag_compute_heading(int16_t raw_x, int16_t raw_y, const magnetometer_config_t *config)
+{
+    float mx = (float)raw_x;
+    float my = (float)raw_y;
+
+    /* Hard-iron offset compensation */
+    mx -= config->offset_x;
+    my -= config->offset_y;
+
+    /* Axis inversion (module may be mounted rotated) */
+    if (config->x_inverted) mx = -mx;
+    if (config->y_inverted) my = -my;
+
+    /* Heading: atan2(Y, X) gives 0=North, CW+ when X=forward, Y=right */
+    float heading = atan2f(my, mx) * (180.0f / (float)M_PI);
+    if (heading < 0.0f) heading += 360.0f;
+
+    /* Magnetic declination: convert magnetic north to true north */
+    heading += config->declination_deg;
+    if (heading >= 360.0f) heading -= 360.0f;
+    if (heading < 0.0f) heading += 360.0f;
+
+    return heading;
+}
+
 /* Convert raw data to physical units and compute attitude */
 static void imu_update(const imu_config_t *config, int16_t *accel_raw, int16_t *gyro_raw, int64_t now_us)
 {
@@ -239,11 +360,43 @@ static void imu_update(const imu_config_t *config, int16_t *accel_raw, int16_t *
         /* Complementary filter: weight gyro more heavily */
         s_roll = COMP_FILTER_ALPHA * s_roll + (1.0f - COMP_FILTER_ALPHA) * accel_roll;
         s_pitch = COMP_FILTER_ALPHA * s_pitch + (1.0f - COMP_FILTER_ALPHA) * accel_pitch;
+
+        /* Magnetometer fusion: correct gyro drift with absolute heading */
+        if (s_mag_available) {
+            s_mag_read_counter++;
+            if (s_mag_read_counter >= MAG_READ_EVERY_N_CYCLES) {
+                s_mag_read_counter = 0;
+                int16_t mag_x, mag_y, mag_z;
+                const magnetometer_config_t *mag_cfg = sensor_config_get_magnetometer();
+                if (mag_cfg && hmc5883l_read_raw(&mag_x, &mag_y, &mag_z) == ESP_OK) {
+                    float mag_yaw = mag_compute_heading(mag_x, mag_y, mag_cfg);
+                    /* Low-pass filter to suppress mag noise */
+                    if (s_mag_yaw_lpf == 0.0f) {
+                        s_mag_yaw_lpf = mag_yaw; /* first sample */
+                    } else {
+                        s_mag_yaw_lpf = MAG_LPF_ALPHA * s_mag_yaw_lpf + (1.0f - MAG_LPF_ALPHA) * mag_yaw;
+                    }
+
+                    /* Slow correction of gyro drift */
+                    float err = s_mag_yaw_lpf - s_yaw;
+                    while (err >  180.0f) err -= 360.0f;
+                    while (err < -180.0f) err += 360.0f;
+                    s_yaw += MAG_CORRECTION_GAIN * err;
+
+                    /* Normalize again */
+                    while (s_yaw >= 360.0f) s_yaw -= 360.0f;
+                    while (s_yaw < 0.0f) s_yaw += 360.0f;
+                }
+            }
+        }
     } else {
         /* First update: initialize with accel */
         s_roll = accel_roll;
         s_pitch = accel_pitch;
         s_yaw = 0.0f;
+        if (s_mag_available) {
+            s_mag_yaw_lpf = 0.0f; /* will be set on first mag read */
+        }
     }
     s_last_update_us = now_us;
 
@@ -337,7 +490,7 @@ esp_err_t driver_imu_init(void)
         return ret;
     }
 
-    /* Add device to I2C bus */
+    /* Add MPU6050 device to I2C bus */
     i2c_device_config_t i2c_dev_config = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = config->address,
@@ -351,13 +504,46 @@ esp_err_t driver_imu_init(void)
         return ret;
     }
 
+    /* Add HMC5883L device to same I2C bus */
+    const magnetometer_config_t *mag_cfg = sensor_config_get_magnetometer();
+    if (mag_cfg && mag_cfg->enabled) {
+        i2c_device_config_t mag_dev_config = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address = mag_cfg->address,
+            .scl_speed_hz = config->freq_hz,
+        };
+        esp_err_t mag_ret = i2c_master_bus_add_device(s_i2c_bus, &mag_dev_config, &s_mag_dev);
+        if (mag_ret == ESP_OK) {
+            mag_ret = hmc5883l_init(mag_cfg);
+            if (mag_ret == ESP_OK) {
+                s_mag_available = true;
+                ESP_LOGI(TAG, "Magnetometer ready, declination=%.1f°, offset=(%.1f,%.1f)",
+                         mag_cfg->declination_deg, mag_cfg->offset_x, mag_cfg->offset_y);
+            } else {
+                ESP_LOGW(TAG, "HMC5883L init failed: %s (mag yaw will drift)", esp_err_to_name(mag_ret));
+                i2c_master_bus_rm_device(s_mag_dev);
+                s_mag_dev = NULL;
+            }
+        } else {
+            ESP_LOGW(TAG, "HMC5883L I2C add failed: %s", esp_err_to_name(mag_ret));
+            s_mag_dev = NULL;
+        }
+    } else {
+        ESP_LOGI(TAG, "Magnetometer disabled in config");
+    }
+
     /* Initialize MPU6050 */
     ret = mpu6050_init(config);
     if (ret != ESP_OK) {
+        if (s_mag_dev) {
+            i2c_master_bus_rm_device(s_mag_dev);
+            s_mag_dev = NULL;
+        }
         i2c_master_bus_rm_device(s_i2c_dev);
         i2c_del_master_bus(s_i2c_bus);
         s_i2c_bus = NULL;
         s_i2c_dev = NULL;
+        s_mag_available = false;
         return ret;
     }
 
@@ -467,7 +653,7 @@ void driver_imu_set_yaw(float deg)
         xSemaphoreGive(s_mutex);
     }
 
-    ESP_LOGI(TAG, "yaw forced to %.1f° (GPS COG bootstrap)", deg);
+    ESP_LOGI(TAG, "yaw forced to %.1f°", deg);
 
     /* Also push to nav_situation immediately */
     nav_situation_update_imu(s_latest_reading.roll_deg, s_latest_reading.pitch_deg, deg, s_latest_reading.gyro_dps[2]);
@@ -509,5 +695,73 @@ esp_err_t driver_imu_calibrate_gyro(void)
     ESP_LOGI(TAG, "Gyro calibration complete: bias=[%.3f, %.3f, %.3f] dps",
              s_gyro_bias_dps[0], s_gyro_bias_dps[1], s_gyro_bias_dps[2]);
 
+    return ESP_OK;
+}
+
+mag_status_t driver_imu_get_mag_status(void)
+{
+    mag_status_t st = {0};
+    if (!s_mag_available || !s_mag_dev) {
+        st.online = false;
+        return st;
+    }
+    st.online = true;
+    const magnetometer_config_t *mag_cfg = sensor_config_get_magnetometer();
+    if (mag_cfg) {
+        st.declination_deg = mag_cfg->declination_deg;
+        st.offset_x = mag_cfg->offset_x;
+        st.offset_y = mag_cfg->offset_y;
+    }
+
+    int16_t mx, my, mz;
+    if (hmc5883l_read_raw(&mx, &my, &mz) == ESP_OK) {
+        st.raw_x = (float)mx * HMC5883L_GAIN_MG_PER_LSB;
+        st.raw_y = (float)my * HMC5883L_GAIN_MG_PER_LSB;
+        st.raw_z = (float)mz * HMC5883L_GAIN_MG_PER_LSB;
+        if (mag_cfg) {
+            st.heading_deg = mag_compute_heading(mx, my, mag_cfg);
+        }
+    }
+    return st;
+}
+
+esp_err_t driver_imu_calibrate_mag(void)
+{
+    if (!s_mag_available || !s_mag_dev) {
+        ESP_LOGE(TAG, "Magnetometer not available, cannot calibrate");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGI(TAG, "Magnetometer calibration: slowly rotate the vehicle 360° (15s)...");
+
+    float min_x = 1e9f, max_x = -1e9f;
+    float min_y = 1e9f, max_y = -1e9f;
+    const int samples = 300; /* 15s @ 50ms */
+
+    for (int i = 0; i < samples; i++) {
+        int16_t mx, my, mz;
+        esp_err_t ret = hmc5883l_read_raw(&mx, &my, &mz);
+        if (ret == ESP_OK) {
+            float fx = (float)mx * HMC5883L_GAIN_MG_PER_LSB;
+            float fy = (float)my * HMC5883L_GAIN_MG_PER_LSB;
+            if (fx < min_x) min_x = fx;
+            if (fx > max_x) max_x = fx;
+            if (fy < min_y) min_y = fy;
+            if (fy > max_y) max_y = fy;
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    float offset_x = (min_x + max_x) / 2.0f;
+    float offset_y = (min_y + max_y) / 2.0f;
+
+    ESP_LOGI(TAG, "Mag calibration complete: min/max X=(%.1f,%.1f) Y=(%.1f,%.1f) offset=(%.1f,%.1f)",
+             min_x, max_x, min_y, max_y, offset_x, offset_y);
+
+    /* Persist to sensors.json */
+    esp_err_t ret = sensor_config_save_mag_offset(offset_x, offset_y);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to save mag offset: %s", esp_err_to_name(ret));
+    }
     return ESP_OK;
 }

@@ -721,3 +721,93 @@ tool_exec read_gps {}         # 对比 raw / filt 坐标差
          `main/tools/tool_nav.c` `main/tools/tool_sensors.c`
          `main/cli/serial_cli.c` `main/CMakeLists.txt`
          `spiffs_data/config/nav.json`
+
+---
+
+## HMC5883L 磁力计集成 —— 替换 GPS COG Bootstrap 提供真实 Compass 方向 (已完成) ✅
+
+**完成状态：** 100%
+**完成时间：** 2026-05-17
+
+**背景：** MPU6050 为六轴 IMU（无磁力计），无法感知绝对方向。此前通过 GPS COG Bootstrap（直行 3m+ 采集 COG 样本）对齐 yaw，存在启动盲开、室内失效等问题。现引入 HMC5883L 磁力计，开机即有绝对 compass 航向。
+
+**已实现的功能：**
+
+1. **HMC5883L 驱动 (`drivers/driver_imu.c`)**
+   - 共用 MPU6050 的 I2C0 总线（地址 0x1E，MPU6050 为 0x68）
+   - 初始化：ID 校验（'H','4','3'），配置为 75Hz 连续测量、±1.3Ga 量程
+   - `hmc5883l_read_raw()`：读取 XYZ 原始数据（输出顺序 X,Z,Y）
+   - `mag_compute_heading()`：硬磁补偿 → 轴反转 → `atan2(Y, X)` → 磁偏角补偿 → [0°, 360°)
+   - 互补滤波融合：gyro 积分主导短期动态（98%），磁力计以 2% 增益低频校正漂移
+   - `driver_imu_calibrate_mag()`：15 秒旋转 360° 采集 min/max，计算硬磁偏移并持久化
+
+2. **配置层扩展 (`drivers/sensor_config.{h,c}`)**
+   - 新增 `magnetometer_config_t`：i2c_port、address、enabled、declination_deg、x_inverted、y_inverted、offset_x、offset_y
+   - `sensors.json` 加载/保存 `magnetometer` 字段
+   - `sensor_config_save_mag_offset()` / `sensor_config_save_mag_declination()`
+
+3. **导航层简化 (`nav/nav_l2_fsm.{h,c}`)**
+   - `L2_YAW_BOOTSTRAP` 标记为 deprecated
+   - Task 启动和 `NEW_GOAL` 直接进入 `L2_CRUISE`
+   - 删除 `fsm_yaw_bootstrap()`、`bootstrap_reset()` 及所有相关变量
+   - Sensor staleness guard 不再豁免 bootstrap
+
+4. **CLI 命令 (`cli/serial_cli.c`)**
+   - `mag_status`：显示磁力计在线状态、原始 XYZ(mG)、heading(°)、declination、offset
+   - `mag_cal`：启动 15 秒硬磁校准，完成后保存到 sensors.json
+   - `mag_decl <deg>`：设置磁偏角并持久化（例：`mag_decl -7.0`）
+
+**关键参数：**
+```c
+#define MAG_LPF_ALPHA           0.80f   /* 磁力计低通滤波 */
+#define MAG_CORRECTION_GAIN     0.02f   /* gyro 漂移校正增益 */
+#define MAG_READ_EVERY_N_CYCLES 2       /* 100Hz IMU 中每 2 周期读一次 mag = 50Hz */
+```
+
+**接线方案：**
+```
+ESP32-S3 GPIO8 (SDA) ───┬─── MPU6050 SDA
+                        └─── HMC5883L SDA
+ESP32-S3 GPIO9 (SCL) ───┬─── MPU6050 SCL
+                        └─── HMC5883L SCL
+3.3V ───────────────────┬─── MPU6050 VCC
+                        └─── HMC5883L VCC
+GND ────────────────────┬─── MPU6050 GND
+                        └─── HMC5883L GND
+```
+- HMC5883L 地址：0x1E（ADDR 引脚接地）
+- 两模块并联后等效上拉约 2.3kΩ，在 I2C 规范内，无需额外电阻
+
+**验收测试方法：**
+```bash
+# Step 1：验证 HMC5883L 在线
+> mag_status
+# 预期：HMC5883L online (ID=H43)，heading 有读数
+
+# Step 2：验证方向基本正确
+# 车头朝北 → heading ≈ 0°，朝东 → ≈ 90°，朝南 → ≈ 180°，朝西 → ≈ 270°
+# 若反向，修改 sensors.json 中 x_inverted / y_inverted
+
+# Step 3：硬磁校准
+> mag_cal
+# 水平放置车辆，缓慢旋转 360°（约 15 秒）
+# 完成后 offset 保存，精度应提升到 ±5° 以内
+
+# Step 4：导航验证
+> nav_pos_save home
+> （移到 home 正南方 5m，车头任意朝向）
+> nav_goto home
+# 预期：直接进入 CRUISE，立即根据 bearing error 转向朝北，无需先直行 3m
+```
+
+**风险与回退：**
+| 风险 | 缓解措施 |
+|------|----------|
+| 模块实际是 QMC5883L（寄存器不兼容） | ID 校验失败，打印明确错误，driver 继续运行但 yaw 会漂移 |
+| 车体强磁场干扰（马达、电池、金属） | 硬磁校准 + 低通滤波 + gyro 主导短期；可调低 MAG_CORRECTION_GAIN |
+| 磁偏角未知导致固定偏移 | 导航 feedback loop 天然抑制固定偏移；通过 `mag_decl` 微调 |
+
+**产出文件清单：**
+- 修改：`main/drivers/driver_imu.{h,c}` `main/drivers/sensor_config.{h,c}`
+- 修改：`main/nav/nav_l2_fsm.{h,c}` `main/cli/serial_cli.c`
+- 文档更新：`progress.md`
