@@ -254,6 +254,10 @@ esp_err_t nav_gps_filter_update(const nav_gps_obs_t *obs,
 {
     if (!obs || !out) return ESP_ERR_INVALID_ARG;
 
+    if (!g.mutex) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     const nav_config_t *cfg = nav_config_get();
 
     xSemaphoreTake(g.mutex, portMAX_DELAY);
@@ -452,6 +456,7 @@ esp_err_t nav_gps_filter_update(const nav_gps_obs_t *obs,
 void nav_gps_filter_get_last(nav_gps_filtered_t *out)
 {
     if (!out) return;
+    if (!g.mutex) return;
     xSemaphoreTake(g.mutex, portMAX_DELAY);
     *out = g.last_out;
     xSemaphoreGive(g.mutex);
@@ -460,6 +465,7 @@ void nav_gps_filter_get_last(nav_gps_filtered_t *out)
 void nav_gps_filter_get_stats(nav_gps_filter_stats_t *out)
 {
     if (!out) return;
+    if (!g.mutex) return;
     xSemaphoreTake(g.mutex, portMAX_DELAY);
     *out = g.stats;
     xSemaphoreGive(g.mutex);

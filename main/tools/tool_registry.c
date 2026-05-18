@@ -450,6 +450,9 @@ esp_err_t tool_registry_init(void)
     };
     register_tool(&ota);
 
+    /* Register nav first (GPS filter must be ready before driver_gps_start) */
+    tool_nav_init();
+
     /* Register Sensors tools */
     tool_sensors_init();
 
@@ -531,7 +534,7 @@ esp_err_t tool_registry_init(void)
     register_tool(&rg);
 
     /* Register nav waypoint + status tools */
-    tool_nav_init();
+    /* tool_nav_init() already called above before sensors */
 
     mimi_tool_t nsw = {
         .name = "nav_save_waypoint",
