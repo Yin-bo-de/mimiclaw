@@ -319,6 +319,11 @@ static float mag_compute_heading(int16_t raw_x, int16_t raw_y, const magnetomete
     if (heading >= 360.0f) heading -= 360.0f;
     if (heading < 0.0f) heading += 360.0f;
 
+    /* Install angle offset: align sensor X-axis with vehicle heading */
+    heading += config->heading_offset_deg;
+    if (heading >= 360.0f) heading -= 360.0f;
+    if (heading < 0.0f) heading += 360.0f;
+
     return heading;
 }
 

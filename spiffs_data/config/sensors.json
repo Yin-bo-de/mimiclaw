@@ -19,9 +19,10 @@
     "i2c_port": 0,
     "address": "0x1E",
     "enabled": true,
-    "declination_deg": 0.0,
+    "declination_deg": -5.5,
+    "heading_offset_deg": 15.0,
     "x_inverted": true,
-    "y_inverted": false,
+    "y_inverted": true,
     "offset_x": 308.20,
     "offset_y": -140.30
   }

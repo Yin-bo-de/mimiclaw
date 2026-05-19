@@ -42,6 +42,7 @@ static const char *TAG = "sensor_config";
 #define MAG_ADDRESS_DEF          0x1E
 #define MAG_ENABLED_DEF          true
 #define MAG_DECLINATION_DEF      0.0f
+#define MAG_HEADING_OFFSET_DEF   0.0f
 #define MAG_X_INVERTED_DEF       false
 #define MAG_Y_INVERTED_DEF       false
 #define MAG_OFFSET_X_DEF         0.0f
@@ -95,6 +96,7 @@ static void mag_load_defaults(void)
     s_mag.address = MAG_ADDRESS_DEF;
     s_mag.enabled = MAG_ENABLED_DEF;
     s_mag.declination_deg = MAG_DECLINATION_DEF;
+    s_mag.heading_offset_deg = MAG_HEADING_OFFSET_DEF;
     s_mag.x_inverted = MAG_X_INVERTED_DEF;
     s_mag.y_inverted = MAG_Y_INVERTED_DEF;
     s_mag.offset_x = MAG_OFFSET_X_DEF;
@@ -219,6 +221,8 @@ esp_err_t sensor_config_load(void)
         if (cJSON_IsBool(v)) s_mag.enabled = cJSON_IsTrue(v);
         v = cJSON_GetObjectItem(mag, "declination_deg");
         if (cJSON_IsNumber(v)) s_mag.declination_deg = (float)v->valuedouble;
+        v = cJSON_GetObjectItem(mag, "heading_offset_deg");
+        if (cJSON_IsNumber(v)) s_mag.heading_offset_deg = (float)v->valuedouble;
         v = cJSON_GetObjectItem(mag, "x_inverted");
         if (cJSON_IsBool(v)) s_mag.x_inverted = cJSON_IsTrue(v);
         v = cJSON_GetObjectItem(mag, "y_inverted");
@@ -244,9 +248,9 @@ esp_err_t sensor_config_load(void)
              s_imu.freq_hz, s_imu.sample_hz);
     ESP_LOGI(TAG, "GPS config loaded: UART%d RX=GPIO%d TX=GPIO%d baud=%d",
              s_gps.uart_port, s_gps.rx_gpio, s_gps.tx_gpio, s_gps.baudrate);
-    ESP_LOGI(TAG, "Magnetometer config loaded: I2C%d addr=0x%02x enabled=%s decl=%.1f° x_inv=%s y_inv=%s offset=(%.1f,%.1f)",
+    ESP_LOGI(TAG, "Magnetometer config loaded: I2C%d addr=0x%02x enabled=%s decl=%.1f° offset=%.1f° x_inv=%s y_inv=%s hard_iron=(%.1f,%.1f)",
              s_mag.i2c_port, s_mag.address, s_mag.enabled ? "yes" : "no",
-             s_mag.declination_deg,
+             s_mag.declination_deg, s_mag.heading_offset_deg,
              s_mag.x_inverted ? "yes" : "no", s_mag.y_inverted ? "yes" : "no",
              s_mag.offset_x, s_mag.offset_y);
     return ESP_OK;
@@ -307,6 +311,8 @@ static esp_err_t sensor_config_update_mag_json(void)
     cJSON_AddBoolToObject(mag, "enabled", s_mag.enabled);
     cJSON_DeleteItemFromObject(mag, "declination_deg");
     cJSON_AddNumberToObject(mag, "declination_deg", s_mag.declination_deg);
+    cJSON_DeleteItemFromObject(mag, "heading_offset_deg");
+    cJSON_AddNumberToObject(mag, "heading_offset_deg", s_mag.heading_offset_deg);
     cJSON_DeleteItemFromObject(mag, "x_inverted");
     cJSON_AddBoolToObject(mag, "x_inverted", s_mag.x_inverted);
     cJSON_DeleteItemFromObject(mag, "y_inverted");
@@ -347,6 +353,16 @@ esp_err_t sensor_config_save_mag_declination(float declination_deg)
     esp_err_t ret = sensor_config_update_mag_json();
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "Magnetometer declination saved: %.2f°", declination_deg);
+    }
+    return ret;
+}
+
+esp_err_t sensor_config_save_mag_heading_offset(float heading_offset_deg)
+{
+    s_mag.heading_offset_deg = heading_offset_deg;
+    esp_err_t ret = sensor_config_update_mag_json();
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Magnetometer heading offset saved: %.2f°", heading_offset_deg);
     }
     return ret;
 }

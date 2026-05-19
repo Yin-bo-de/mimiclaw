@@ -1253,7 +1253,9 @@ static int cmd_mag_status(int argc, char **argv)
     }
     printf("Magnetometer: ONLINE\n");
     printf("  Raw:      X=%.1f mG, Y=%.1f mG, Z=%.1f mG\n", st.raw_x, st.raw_y, st.raw_z);
-    printf("  Heading:  %.1f° (declination=%.1f°)\n", st.heading_deg, st.declination_deg);
+    const magnetometer_config_t *mag_cfg = sensor_config_get_magnetometer();
+    printf("  Heading:  %.1f° (declination=%.1f°, heading_offset=%.1f°)\n",
+           st.heading_deg, st.declination_deg, mag_cfg ? mag_cfg->heading_offset_deg : 0.0f);
     printf("  Offset:   X=%.1f, Y=%.1f\n", st.offset_x, st.offset_y);
     return 0;
 }
@@ -1291,6 +1293,30 @@ static int cmd_mag_decl(int argc, char **argv)
     esp_err_t err = sensor_config_save_mag_declination(decl);
     if (err == ESP_OK) {
         printf("Magnetic declination set to %.1f degrees. Restart to apply.\n", decl);
+    } else {
+        printf("Failed to save: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+    return 0;
+}
+
+/* --- mag_heading_offset command --- */
+static struct {
+    struct arg_dbl *deg;
+    struct arg_end *end;
+} mag_heading_offset_args;
+
+static int cmd_mag_heading_offset(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&mag_heading_offset_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, mag_heading_offset_args.end, argv[0]);
+        return 1;
+    }
+    float offset = (float)mag_heading_offset_args.deg->dval[0];
+    esp_err_t err = sensor_config_save_mag_heading_offset(offset);
+    if (err == ESP_OK) {
+        printf("Magnetometer heading offset set to %.1f degrees. Restart to apply.\n", offset);
     } else {
         printf("Failed to save: %s\n", esp_err_to_name(err));
         return 1;
@@ -1801,6 +1827,17 @@ esp_err_t serial_cli_init(void)
         .argtable = &mag_decl_args,
     };
     esp_console_cmd_register(&mag_decl_cmd);
+
+    /* mag_heading_offset */
+    mag_heading_offset_args.deg = arg_dbl1(NULL, NULL, "<deg>", "Heading offset in degrees (positive = add to sensor heading)");
+    mag_heading_offset_args.end = arg_end(1);
+    esp_console_cmd_t mag_heading_offset_cmd = {
+        .command = "mag_heading_offset",
+        .help = "Set magnetometer heading offset: mag_heading_offset 15.0",
+        .func = &cmd_mag_heading_offset,
+        .argtable = &mag_heading_offset_args,
+    };
+    esp_console_cmd_register(&mag_heading_offset_cmd);
 
     /* Start REPL */
     ESP_ERROR_CHECK(esp_console_start_repl(repl));
