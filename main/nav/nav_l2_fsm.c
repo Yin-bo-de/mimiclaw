@@ -266,9 +266,10 @@ static void fsm_avoid(const nav_situation_t *sit, const nav_config_t *cfg, int s
 {
     static l2_state_t last_logged_state = L2_FAULT;
     if (last_logged_state != s_state) {
+        bool physical_left = (side == 0) ^ rc_nav_steer_is_reversed();
         ESP_LOGI(TAG, "决策：%s (steer=%d)",
-                 side == 0 ? "左转" : "右转",
-                 side == 0 ? -100 : 100);
+                 physical_left ? "左转" : "右转",
+                 physical_left ? -100 : 100);
         last_logged_state = s_state;
     }
 

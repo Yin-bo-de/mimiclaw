@@ -455,3 +455,8 @@ esp_err_t rc_nav_steer(int pct)
     char buf[64];
     return pwm_set_pulse(s_rc.steer_gpio, pulse_us, buf, sizeof(buf));
 }
+
+bool rc_nav_steer_is_reversed(void)
+{
+    return s_rc.steer_reversed;
+}
