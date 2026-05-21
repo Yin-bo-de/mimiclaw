@@ -78,6 +78,13 @@ static int clamp_int(int v, int lo, int hi)
     return v;
 }
 
+static float clamp_float(float v, float lo, float hi)
+{
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
 static int min_valid_distance(const nav_situation_t *sit)
 {
     int64_t now = esp_timer_get_time();
@@ -209,17 +216,31 @@ static void fsm_cruise(const nav_situation_t *sit, const nav_config_t *cfg)
         }
     }
 
-    /* Compute steer toward goal */
+    /* Compute steer toward goal (PID control) */
     int steer = 0;
     if (sit->gps_fix && sit->has_goal) {
         double bearing = nav_planner_bearing_deg(sit->lat, sit->lon,
                                                   s_goal_lat, s_goal_lon);
         double herr = nav_planner_heading_error_deg(sit->yaw_deg, bearing);
-        steer = clamp_int((int)(cfg->heading_kp * herr),
+
+        /* Integral term with anti-windup */
+        static float s_heading_integral = 0.0f;
+        static double s_prev_heading_error = 0.0f;
+        float dt_s = (float)cfg->l2_tick_ms / 1000.0f;
+        s_heading_integral += (float)herr * dt_s;
+        s_heading_integral = clamp_float(s_heading_integral, -50.0f, 50.0f);
+
+        /* Derivative term */
+        float herr_deriv = (float)(herr - s_prev_heading_error) / dt_s;
+        s_prev_heading_error = herr;
+
+        steer = clamp_int((int)(cfg->heading_kp * herr
+                              + cfg->heading_ki * s_heading_integral
+                              + cfg->heading_kd * herr_deriv),
                           -cfg->heading_max_steer_pct,
                            cfg->heading_max_steer_pct);
-        ESP_LOGI(TAG, "NAV: goal_bearing=%.1f° yaw=%.1f° error=%.1f° steer=%d",
-                 bearing, sit->yaw_deg, herr, steer);
+        ESP_LOGI(TAG, "NAV: goal_bearing=%.1f° yaw=%.1f° error=%.1f° steer=%d (I=%.1f D=%.1f)",
+                 bearing, sit->yaw_deg, herr, steer, s_heading_integral, herr_deriv);
     }
 
     /* Check for obstacle */

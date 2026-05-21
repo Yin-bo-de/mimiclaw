@@ -140,9 +140,14 @@ static float s_gyro_bias_dps[3] = {0.0f, 0.0f, 0.0f};
 #define HMC5883L_GAIN_MG_PER_LSB    0.92f
 
 /* Magnetometer fusion parameters */
-#define MAG_LPF_ALPHA               0.80f
-#define MAG_CORRECTION_GAIN         0.02f
+#define MAG_LPF_ALPHA               0.50f
+#define MAG_CORRECTION_GAIN         0.03f
 #define MAG_READ_EVERY_N_CYCLES     2
+#define MAG_DISAGREE_THRESHOLD_DPS  30.0f
+#define MAG_DISAGREE_MAX_COUNT      50
+#define MAG_TRUST_MIN               0.1f
+#define MAG_TRUST_DECAY             0.02f
+#define MAG_TRUST_RECOVER           0.005f
 
 /* I2C handles */
 static i2c_master_bus_handle_t s_i2c_bus = NULL;
@@ -153,6 +158,16 @@ static i2c_master_dev_handle_t s_mag_dev = NULL;
 static bool s_mag_available = false;
 static float s_mag_yaw_lpf = 0.0f;
 static int s_mag_read_counter = 0;
+static float s_mag_prev_yaw = 0.0f;
+static int s_mag_disagree_count = 0;
+static float s_mag_trust = 1.0f;
+
+/* GPS COG correction state */
+static int s_gps_cog_counter = 0;
+#define GPS_COG_CHECK_CYCLES     20    /* check every 200ms @ 100Hz */
+#define GPS_COG_MIN_SPEED_MPS    1.0f
+#define GPS_COG_MIN_SATS         6
+#define GPS_COG_GAIN             0.005f
 
 /* I2C utility functions */
 static esp_err_t i2c_write_reg(uint8_t reg_addr, uint8_t data)
@@ -375,6 +390,28 @@ static void imu_update(const imu_config_t *config, int16_t *accel_raw, int16_t *
                 const magnetometer_config_t *mag_cfg = sensor_config_get_magnetometer();
                 if (mag_cfg && hmc5883l_read_raw(&mag_x, &mag_y, &mag_z) == ESP_OK) {
                     float mag_yaw = mag_compute_heading(mag_x, mag_y, mag_cfg);
+
+                    /* Consistency check: compare mag rate vs gyro rate */
+                    float mag_delta = mag_yaw - s_mag_prev_yaw;
+                    while (mag_delta >  180.0f) mag_delta -= 360.0f;
+                    while (mag_delta < -180.0f) mag_delta += 360.0f;
+                    float mag_rate_dps = mag_delta / (MAG_READ_EVERY_N_CYCLES * 0.01f);
+                    float gyro_rate_dps = -gz; /* CW+ convention */
+                    float rate_diff = fabsf(mag_rate_dps - gyro_rate_dps);
+
+                    if (rate_diff > MAG_DISAGREE_THRESHOLD_DPS) {
+                        s_mag_disagree_count++;
+                        if (s_mag_disagree_count > MAG_DISAGREE_MAX_COUNT) {
+                            s_mag_trust = fmaxf(MAG_TRUST_MIN,
+                                                s_mag_trust - MAG_TRUST_DECAY);
+                        }
+                    } else {
+                        s_mag_disagree_count = 0;
+                        s_mag_trust = fminf(1.0f,
+                                            s_mag_trust + MAG_TRUST_RECOVER);
+                    }
+                    s_mag_prev_yaw = mag_yaw;
+
                     /* Low-pass filter to suppress mag noise */
                     if (s_mag_yaw_lpf == 0.0f) {
                         s_mag_yaw_lpf = mag_yaw; /* first sample */
@@ -382,16 +419,33 @@ static void imu_update(const imu_config_t *config, int16_t *accel_raw, int16_t *
                         s_mag_yaw_lpf = MAG_LPF_ALPHA * s_mag_yaw_lpf + (1.0f - MAG_LPF_ALPHA) * mag_yaw;
                     }
 
-                    /* Slow correction of gyro drift */
+                    /* Correction with dynamic trust */
                     float err = s_mag_yaw_lpf - s_yaw;
                     while (err >  180.0f) err -= 360.0f;
                     while (err < -180.0f) err += 360.0f;
-                    s_yaw += MAG_CORRECTION_GAIN * err;
+                    s_yaw += MAG_CORRECTION_GAIN * s_mag_trust * err;
 
                     /* Normalize again */
                     while (s_yaw >= 360.0f) s_yaw -= 360.0f;
                     while (s_yaw < 0.0f) s_yaw += 360.0f;
                 }
+            }
+        }
+
+        /* GPS COG correction: long-term anchor against mag+gyro common drift */
+        s_gps_cog_counter++;
+        if (s_gps_cog_counter >= GPS_COG_CHECK_CYCLES) {
+            s_gps_cog_counter = 0;
+            nav_situation_t gps_sit;
+            nav_situation_get(&gps_sit);
+            if (gps_sit.gps_fix && gps_sit.speed_mps > GPS_COG_MIN_SPEED_MPS
+                && gps_sit.gps_sats >= GPS_COG_MIN_SATS) {
+                float cog_err = (float)gps_sit.course_deg - s_yaw;
+                while (cog_err >  180.0f) cog_err -= 360.0f;
+                while (cog_err < -180.0f) cog_err += 360.0f;
+                s_yaw += GPS_COG_GAIN * cog_err;
+                while (s_yaw >= 360.0f) s_yaw -= 360.0f;
+                while (s_yaw < 0.0f) s_yaw += 360.0f;
             }
         }
     } else {

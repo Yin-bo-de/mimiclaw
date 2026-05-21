@@ -28,6 +28,8 @@ typedef struct {
     int replan_ms;
     float arrival_radius_m;
     float heading_kp;
+    float heading_ki;
+    float heading_kd;
     int heading_max_steer_pct;
 
     /* Escalate thresholds */

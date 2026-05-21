@@ -26,6 +26,8 @@ static nav_config_t s_config = {
     .replan_ms                = 1500,
     .arrival_radius_m         = 3.0f,
     .heading_kp               = 2.0f,
+    .heading_ki               = 0.1f,
+    .heading_kd               = 0.5f,
     .heading_max_steer_pct    = 100,
     .escalate_cooldown_s      = 60,
     .stuck_window_s           = 10,
@@ -86,6 +88,10 @@ static void parse_json(cJSON *root)
         if (cJSON_IsNumber(v)) s_config.arrival_radius_m = (float)v->valuedouble;
         v = cJSON_GetObjectItem(l2, "heading_kp");
         if (cJSON_IsNumber(v)) s_config.heading_kp = (float)v->valuedouble;
+        v = cJSON_GetObjectItem(l2, "heading_ki");
+        if (cJSON_IsNumber(v)) s_config.heading_ki = (float)v->valuedouble;
+        v = cJSON_GetObjectItem(l2, "heading_kd");
+        if (cJSON_IsNumber(v)) s_config.heading_kd = (float)v->valuedouble;
         v = cJSON_GetObjectItem(l2, "heading_max_steer_pct");
         if (cJSON_IsNumber(v)) s_config.heading_max_steer_pct = (int)v->valuedouble;
     }
