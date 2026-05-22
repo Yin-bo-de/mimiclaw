@@ -22,11 +22,11 @@ static const char *TAG = "tool_pwm";
 #define RC_CONFIG_PATH        MIMI_SPIFFS_BASE "/config/rc.json"
 
 /* RC calibration defaults (standard servo / ESC) */
-#define RC_STEER_GPIO_DEF     4
+#define RC_STEER_GPIO_DEF     11
 #define RC_STEER_CENTER_US    1500
 #define RC_STEER_MIN_US       1000
 #define RC_STEER_MAX_US       2000
-#define RC_THROTTLE_GPIO_DEF  5
+#define RC_THROTTLE_GPIO_DEF  21
 #define RC_THROTTLE_NEUTRAL   1500
 #define RC_THROTTLE_FWD_US    2000
 #define RC_THROTTLE_REV_US    1000

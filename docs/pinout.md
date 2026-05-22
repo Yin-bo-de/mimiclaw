@@ -18,8 +18,8 @@
 | | ECHO | 16 | 输入 | |
 | **GPS (NEO-6M)** | RX | 17 | 输入 | 接 GPS 模块 TX |
 | | TX | 18 | 输出 | 接 GPS 模块 RX |
-| **舵机 (Steer)** | PWM | 4 | 输出 | 50Hz, 1000~2000us |
-| **电调/油门 (ESC)** | PWM | 5 | 输出 | 50Hz, 1000~2000us |
+| **舵机 (Steer)** | PWM | 11 | 输出 | 50Hz, 1000~2000us |
+| **电调/油门 (ESC)** | PWM | 21 | 输出 | 50Hz, 1000~2000us |
 
 ---
 
@@ -125,14 +125,16 @@ GPIO 0   ── BOOT 按键 / 下载模式（系统保留，勿接外设）
 GPIO 1   ── 空闲 ✅
 GPIO 2   ── 空闲 ✅
 GPIO 3   ── 空闲 ✅
-GPIO 4   ── 舵机 PWM (Steer)          [已用]
-GPIO 5   ── 油门 PWM (Throttle/ESC)   [已用]
+GPIO 4   ── 空闲 ✅
+GPIO 5   ── 空闲 ✅
+GPIO 11  ── 舵机 PWM (Steer)          [已用]
+GPIO 21  ── 油门 PWM (Throttle/ESC)   [已用]
 GPIO 6   ── 空闲 ✅
 GPIO 7   ── 空闲 ✅
 GPIO 8   ── I2C0 SDA (MPU6050+HMC5883L) [已用]
 GPIO 9   ── I2C0 SCL (MPU6050+HMC5883L) [已用]
 GPIO 10  ── 超声波左 TRIG             [已用]
-GPIO 11  ── 空闲 ✅
+GPIO 11  ── 舵机 PWM (Steer)          [已用]
 GPIO 12  ── 超声波左 ECHO             [已用]
 GPIO 13  ── 超声波前 TRIG             [已用]
 GPIO 14  ── 超声波前 ECHO             [已用]
@@ -142,7 +144,7 @@ GPIO 17  ── UART1 RX (GPS TX)         [已用]
 GPIO 18  ── UART1 TX (GPS RX)         [已用]
 GPIO 19  ── USB D- (系统保留)
 GPIO 20  ── USB D+ (系统保留)
-GPIO 21  ── 空闲 ✅
+GPIO 21  ── 油门 PWM (Throttle/ESC)   [已用]
 GPIO 26  ── SPI Flash / PSRAM（系统保留，勿用）
 ...      ── Flash/PSRAM 专用引脚（26~37 系统保留）
 GPIO 38  ── 空闲 ✅（部分封装可用）
@@ -160,10 +162,10 @@ GPIO 46  ── 空闲 ✅（部分封装可用）
 | GPIO 1 | 通用 I/O、按键 | |
 | GPIO 2 | 通用 I/O、按键 | |
 | GPIO 3 | 通用 I/O、按键 | |
+| GPIO 4 | 通用 I/O | 旧文档误标为舵机，实际代码未使用 |
+| GPIO 5 | 通用 I/O | 旧文档误标为油门，实际代码未使用 |
 | GPIO 6 | 通用 I/O、WS2812 LED | 带 RTC 功能 |
 | GPIO 7 | 通用 I/O | |
-| GPIO 11 | 通用 I/O | progress.md 旧文档中误标为舵机，实际代码未使用 |
-| GPIO 21 | 通用 I/O | |
 | GPIO 38 | 通用 I/O | 部分封装可用 |
 | GPIO 46 | 通用 I/O | 部分封装可用 |
 
