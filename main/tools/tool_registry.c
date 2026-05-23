@@ -74,10 +74,13 @@ esp_err_t tool_registry_init(void)
     /* Register get_current_time */
     mimi_tool_t gt = {
         .name = "get_current_time",
-        .description = "Get the current date and time. Also sets the system clock. Call this when you need to know what time or date it is.",
+        .description = "Get the current date and time. Also sets the system clock. Pass timezone/location when the user asks about a specific place, e.g. Asia/Shanghai for Hangzhou.",
         .input_schema_json =
             "{\"type\":\"object\","
-            "\"properties\":{},"
+            "\"properties\":{"
+            "\"timezone\":{\"type\":\"string\",\"description\":\"Optional timezone such as Asia/Shanghai, UTC, or UTC+8\"},"
+            "\"location\":{\"type\":\"string\",\"description\":\"Optional place name such as Hangzhou or 杭州\"}"
+            "},"
             "\"required\":[]}",
         .execute = tool_get_time_execute,
     };

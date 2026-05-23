@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "cJSON.h"
 
 static const char *TAG = "tool_time";
 
@@ -17,8 +18,39 @@ static const char *MONTHS[] = {
     "Jul","Aug","Sep","Oct","Nov","Dec"
 };
 
+static const char *timezone_to_posix(const char *timezone)
+{
+    if (!timezone || timezone[0] == '\0') return MIMI_TIMEZONE;
+    if (strcmp(timezone, "Asia/Shanghai") == 0 || strcmp(timezone, "China") == 0 ||
+        strcmp(timezone, "Shanghai") == 0 || strcmp(timezone, "Hangzhou") == 0 ||
+        strcmp(timezone, "UTC+8") == 0 || strcmp(timezone, "CST-8") == 0 ||
+        strstr(timezone, "杭州") || strstr(timezone, "中国")) {
+        return "CST-8";
+    }
+    if (strcmp(timezone, "UTC") == 0 || strcmp(timezone, "GMT") == 0) return "UTC0";
+    return MIMI_TIMEZONE;
+}
+
+static void parse_timezone_arg(const char *input_json, char *timezone, size_t timezone_size)
+{
+    if (!timezone || timezone_size == 0) return;
+    timezone[0] = '\0';
+    cJSON *root = cJSON_Parse(input_json ? input_json : "{}");
+    if (!root) return;
+
+    cJSON *item = cJSON_GetObjectItem(root, "timezone");
+    if (!cJSON_IsString(item)) {
+        item = cJSON_GetObjectItem(root, "location");
+    }
+    if (cJSON_IsString(item) && item->valuestring) {
+        strncpy(timezone, item->valuestring, timezone_size - 1);
+        timezone[timezone_size - 1] = '\0';
+    }
+    cJSON_Delete(root);
+}
+
 /* Parse "Sat, 01 Feb 2025 10:25:00 GMT" → set system clock, return formatted string */
-static bool parse_and_set_time(const char *date_str, char *out, size_t out_size)
+static bool parse_and_set_time(const char *date_str, const char *timezone, char *out, size_t out_size)
 {
     int day, year, hour, min, sec;
     char mon_str[4] = {0};
@@ -44,8 +76,8 @@ static bool parse_and_set_time(const char *date_str, char *out, size_t out_size)
     tzset();
     time_t t = mktime(&tm);
 
-    /* Restore timezone */
-    setenv("TZ", MIMI_TIMEZONE, 1);
+    const char *posix_tz = timezone_to_posix(timezone);
+    setenv("TZ", posix_tz, 1);
     tzset();
 
     if (t < 0) return false;
@@ -53,7 +85,6 @@ static bool parse_and_set_time(const char *date_str, char *out, size_t out_size)
     struct timeval tv = { .tv_sec = t };
     settimeofday(&tv, NULL);
 
-    /* Format in local time */
     struct tm local;
     localtime_r(&t, &local);
     strftime(out, out_size, "%Y-%m-%d %H:%M:%S %Z (%A)", &local);
@@ -61,15 +92,15 @@ static bool parse_and_set_time(const char *date_str, char *out, size_t out_size)
     return true;
 }
 
-/* Fetch time via proxy: HEAD request to api.telegram.org, parse Date header */
-static esp_err_t fetch_time_via_proxy(char *out, size_t out_size)
+/* Fetch time via proxy: HEAD request to www.baidu.com, parse Date header */
+static esp_err_t fetch_time_via_proxy(const char *timezone, char *out, size_t out_size)
 {
-    proxy_conn_t *conn = proxy_conn_open("api.telegram.org", 443, 10000);
+    proxy_conn_t *conn = proxy_conn_open("www.baidu.com", 443, 10000);
     if (!conn) return ESP_ERR_HTTP_CONNECT;
 
     const char *req =
         "HEAD / HTTP/1.1\r\n"
-        "Host: api.telegram.org\r\n"
+        "Host: www.baidu.com\r\n"
         "Connection: close\r\n\r\n";
 
     if (proxy_conn_write(conn, req, strlen(req)) < 0) {
@@ -102,7 +133,7 @@ static esp_err_t fetch_time_via_proxy(char *out, size_t out_size)
     memcpy(date_val, date_hdr, dlen);
     date_val[dlen] = '\0';
 
-    if (!parse_and_set_time(date_val, out, out_size)) return ESP_FAIL;
+    if (!parse_and_set_time(date_val, timezone, out, out_size)) return ESP_FAIL;
     return ESP_OK;
 }
 
@@ -131,12 +162,12 @@ static esp_err_t time_http_event_handler(esp_http_client_event_t *evt)
 }
 
 /* Fetch time via direct HTTPS */
-static esp_err_t fetch_time_direct(char *out, size_t out_size)
+static esp_err_t fetch_time_direct(const char *timezone, char *out, size_t out_size)
 {
     time_header_ctx_t ctx = {0};
 
     esp_http_client_config_t config = {
-        .url = "https://api.telegram.org/",
+        .url = "https://www.baidu.com/",
         .method = HTTP_METHOD_HEAD,
         .timeout_ms = 10000,
         .crt_bundle_attach = esp_crt_bundle_attach,
@@ -153,19 +184,21 @@ static esp_err_t fetch_time_direct(char *out, size_t out_size)
     if (err != ESP_OK) return err;
     if (ctx.date_val[0] == '\0') return ESP_ERR_NOT_FOUND;
 
-    if (!parse_and_set_time(ctx.date_val, out, out_size)) return ESP_FAIL;
+    if (!parse_and_set_time(ctx.date_val, timezone, out, out_size)) return ESP_FAIL;
     return ESP_OK;
 }
 
 esp_err_t tool_get_time_execute(const char *input_json, char *output, size_t output_size)
 {
-    ESP_LOGI(TAG, "Fetching current time...");
+    char timezone[64];
+    parse_timezone_arg(input_json, timezone, sizeof(timezone));
+    ESP_LOGI(TAG, "Fetching current time... timezone=%s", timezone[0] ? timezone : MIMI_TIMEZONE);
 
     esp_err_t err;
     if (http_proxy_is_enabled()) {
-        err = fetch_time_via_proxy(output, output_size);
+        err = fetch_time_via_proxy(timezone, output, output_size);
     } else {
-        err = fetch_time_direct(output, output_size);
+        err = fetch_time_direct(timezone, output, output_size);
     }
 
     if (err == ESP_OK) {

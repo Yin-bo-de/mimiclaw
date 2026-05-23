@@ -171,6 +171,24 @@ static int cmd_set_model_provider(int argc, char **argv)
     return 0;
 }
 
+/* --- set_api_url command --- */
+static struct {
+    struct arg_str *url;
+    struct arg_end *end;
+} api_url_args;
+
+static int cmd_set_api_url(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&api_url_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, api_url_args.end, argv[0]);
+        return 1;
+    }
+    llm_set_api_url(api_url_args.url->sval[0]);
+    printf("API URL set.\n");
+    return 0;
+}
+
 /* --- memory_read command --- */
 static int cmd_memory_read(int argc, char **argv)
 {
@@ -896,6 +914,17 @@ esp_err_t serial_cli_init(void)
         .argtable = &provider_args,
     };
     esp_console_cmd_register(&provider_cmd);
+
+    /* set_api_url */
+    api_url_args.url = arg_str1(NULL, NULL, "<url>", "Custom API base URL (OpenAI-compatible)");
+    api_url_args.end = arg_end(1);
+    esp_console_cmd_t api_url_cmd = {
+        .command = "set_api_url",
+        .help = "Set custom LLM API URL. Pass empty string to reset to default.",
+        .func = &cmd_set_api_url,
+        .argtable = &api_url_args,
+    };
+    esp_console_cmd_register(&api_url_cmd);
 
     /* skill_list */
     esp_console_cmd_t skill_list_cmd = {

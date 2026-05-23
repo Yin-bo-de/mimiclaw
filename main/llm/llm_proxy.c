@@ -21,6 +21,7 @@ static const char *TAG = "llm";
 static char s_api_key[LLM_API_KEY_MAX_LEN] = {0};
 static char s_model[LLM_MODEL_MAX_LEN] = MIMI_LLM_DEFAULT_MODEL;
 static char s_provider[16] = MIMI_LLM_PROVIDER_DEFAULT;
+static char s_api_url[256] = {0};   /* custom API base URL (OpenAI-compatible providers) */
 
 static void llm_log_payload(const char *label, const char *payload)
 {
@@ -187,18 +188,61 @@ static bool provider_is_openai(void)
     return strcmp(s_provider, "openai") == 0;
 }
 
+/* Extract host and path from a full URL like https://api.deepseek.com/v1/chat/completions */
+
+static void url_parse_host_path(const char *url, char *host_out, size_t host_size,
+                                char *path_out, size_t path_size)
+{
+    const char *p = url;
+    /* skip scheme */
+    const char *scheme = strstr(p, "://");
+    if (scheme) p = scheme + 3;
+    /* host ends at '/' or '\0' */
+    const char *slash = strchr(p, '/');
+    size_t host_len = slash ? (size_t)(slash - p) : strlen(p);
+    if (host_len >= host_size) host_len = host_size - 1;
+    memcpy(host_out, p, host_len);
+    host_out[host_len] = '\0';
+    if (slash && path_size > 0) {
+        size_t path_len = strlen(slash);
+        if (path_len >= path_size) path_len = path_size - 1;
+        memcpy(path_out, slash, path_len);
+        path_out[path_len] = '\0';
+    } else if (path_size > 0) {
+        path_out[0] = '\0';
+    }
+}
+
+static bool has_custom_api_url(void)
+{
+    return s_api_url[0] != '\0';
+}
+
 static const char *llm_api_url(void)
 {
+    if (has_custom_api_url()) return s_api_url;
     return provider_is_openai() ? MIMI_OPENAI_API_URL : MIMI_LLM_API_URL;
 }
 
 static const char *llm_api_host(void)
 {
+    if (has_custom_api_url()) {
+        static char host[128];
+        char path[256];
+        url_parse_host_path(s_api_url, host, sizeof(host), path, sizeof(path));
+        return host;
+    }
     return provider_is_openai() ? "api.openai.com" : "api.anthropic.com";
 }
 
 static const char *llm_api_path(void)
 {
+    if (has_custom_api_url()) {
+        static char path[256];
+        char host[128];
+        url_parse_host_path(s_api_url, host, sizeof(host), path, sizeof(path));
+        return path[0] ? path : "/";
+    }
     return provider_is_openai() ? "/v1/chat/completions" : "/v1/messages";
 }
 
@@ -215,6 +259,9 @@ esp_err_t llm_proxy_init(void)
     }
     if (MIMI_SECRET_MODEL_PROVIDER[0] != '\0') {
         safe_copy(s_provider, sizeof(s_provider), MIMI_SECRET_MODEL_PROVIDER);
+    }
+    if (MIMI_SECRET_LLM_API_URL[0] != '\0') {
+        safe_copy(s_api_url, sizeof(s_api_url), MIMI_SECRET_LLM_API_URL);
     }
 
     /* NVS overrides take highest priority (set via CLI) */
@@ -235,11 +282,18 @@ esp_err_t llm_proxy_init(void)
         if (nvs_get_str(nvs, MIMI_NVS_KEY_PROVIDER, provider_tmp, &len) == ESP_OK && provider_tmp[0]) {
             safe_copy(s_provider, sizeof(s_provider), provider_tmp);
         }
+        char url_tmp[256] = {0};
+        len = sizeof(url_tmp);
+        if (nvs_get_str(nvs, MIMI_NVS_KEY_API_URL, url_tmp, &len) == ESP_OK && url_tmp[0]) {
+            safe_copy(s_api_url, sizeof(s_api_url), url_tmp);
+        }
         nvs_close(nvs);
     }
 
     if (s_api_key[0]) {
-        ESP_LOGI(TAG, "LLM proxy initialized (provider: %s, model: %s)", s_provider, s_model);
+        ESP_LOGI(TAG, "LLM proxy initialized (provider: %s, model: %s, url: %s)",
+                 s_provider, s_model,
+                 has_custom_api_url() ? s_api_url : "(default)");
     } else {
         ESP_LOGW(TAG, "No API key. Use CLI: set_api_key <KEY>");
     }
@@ -539,6 +593,8 @@ void llm_response_free(llm_response_t *resp)
     free(resp->text);
     resp->text = NULL;
     resp->text_len = 0;
+    free(resp->reasoning_content);
+    resp->reasoning_content = NULL;
     for (int i = 0; i < resp->call_count; i++) {
         free(resp->calls[i].input);
         resp->calls[i].input = NULL;
@@ -654,6 +710,11 @@ esp_err_t llm_chat_tools(const char *system_prompt,
                         memcpy(resp->text, content->valuestring, tlen);
                         resp->text_len = tlen;
                     }
+                }
+
+                cJSON *reasoning = cJSON_GetObjectItem(message, "reasoning_content");
+                if (reasoning && cJSON_IsString(reasoning)) {
+                    resp->reasoning_content = strdup(reasoning->valuestring);
                 }
 
                 cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
@@ -807,5 +868,18 @@ esp_err_t llm_set_provider(const char *provider)
 
     safe_copy(s_provider, sizeof(s_provider), provider);
     ESP_LOGI(TAG, "Provider set to: %s", s_provider);
+    return ESP_OK;
+}
+
+esp_err_t llm_set_api_url(const char *api_url)
+{
+    nvs_handle_t nvs;
+    ESP_ERROR_CHECK(nvs_open(MIMI_NVS_LLM, NVS_READWRITE, &nvs));
+    ESP_ERROR_CHECK(nvs_set_str(nvs, MIMI_NVS_KEY_API_URL, api_url));
+    ESP_ERROR_CHECK(nvs_commit(nvs));
+    nvs_close(nvs);
+
+    safe_copy(s_api_url, sizeof(s_api_url), api_url);
+    ESP_LOGI(TAG, "API URL set to: %s", s_api_url[0] ? s_api_url : "(default)");
     return ESP_OK;
 }

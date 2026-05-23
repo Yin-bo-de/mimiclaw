@@ -27,6 +27,12 @@ esp_err_t llm_set_provider(const char *provider);
  */
 esp_err_t llm_set_model(const char *model);
 
+/**
+ * Save the custom API base URL to NVS (for OpenAI-compatible providers).
+ * Pass empty string to clear and use default URL.
+ */
+esp_err_t llm_set_api_url(const char *api_url);
+
 /* ── Tool Use Support ──────────────────────────────────────────── */
 
 typedef struct {
@@ -39,6 +45,7 @@ typedef struct {
 typedef struct {
     char *text;                                  /* accumulated text blocks */
     size_t text_len;
+    char *reasoning_content;                     /* DeepSeek thinking mode reasoning_content */
     llm_tool_call_t calls[MIMI_MAX_TOOL_CALLS];
     int call_count;
     bool tool_use;                               /* stop_reason == "tool_use" */
