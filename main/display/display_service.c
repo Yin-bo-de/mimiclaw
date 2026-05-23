@@ -2,6 +2,8 @@
 
 #include "display/display_render.h"
 #include "display/epaper_waveshare_2in9_v2.h"
+#include "tools/tool_get_time.h"
+#include "tools/tool_web_search.h"
 
 #include "cJSON.h"
 #include "esp_log.h"
@@ -11,6 +13,7 @@
 #include "freertos/task.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -18,7 +21,17 @@
 static const char *TAG = "display_service";
 
 #define DISPLAY_EVENT_REFRESH BIT0
+#define DISPLAY_DIRTY_HEADER  BIT0
+#define DISPLAY_DIRTY_WEATHER BIT1
+#define DISPLAY_DIRTY_TODOS   BIT2
+#define DISPLAY_DIRTY_FULL    BIT3
+#define DISPLAY_BOOT_UPDATE_STACK 8192
+#define DISPLAY_BOOT_UPDATE_PRIO  3
 #define DISPLAY_STATE_TMP_FILE MIMI_DISPLAY_STATE_FILE ".tmp"
+
+typedef struct {
+    char ip_address[16];
+} display_boot_update_ctx_t;
 
 static mimi_display_state_t s_state;
 static SemaphoreHandle_t s_state_mutex;
@@ -26,6 +39,7 @@ static EventGroupHandle_t s_display_events;
 static TaskHandle_t s_display_task;
 static bool s_initialized;
 static bool s_driver_attempted;
+static uint32_t s_dirty_regions;
 static uint8_t s_framebuffer[MIMI_DISPLAY_FB_BYTES];
 
 static void copy_string_truncated(char *dest, size_t dest_size, const char *src)
@@ -46,6 +60,59 @@ static int64_t current_epoch_or_zero(void)
     return now > 0 ? (int64_t)now : 0;
 }
 
+static bool search_line_is_url(const char *line)
+{
+    return strncmp(line, "http://", 7) == 0 || strncmp(line, "https://", 8) == 0;
+}
+
+static bool search_line_is_result_title(const char *line)
+{
+    const char *cursor = line;
+    while (*cursor >= '0' && *cursor <= '9') {
+        cursor++;
+    }
+    return cursor > line && cursor[0] == '.' && cursor[1] == ' ';
+}
+
+static void copy_line_summary(const char *line, size_t len, char *summary, size_t summary_size)
+{
+    if (len >= summary_size) {
+        len = summary_size - 1;
+    }
+    memcpy(summary, line, len);
+    summary[len] = '\0';
+}
+
+static void extract_search_summary(const char *search_output, char *summary, size_t summary_size)
+{
+    if (!summary || summary_size == 0) {
+        return;
+    }
+    summary[0] = '\0';
+    if (!search_output || search_output[0] == '\0') {
+        return;
+    }
+
+    const char *cursor = search_output;
+    while (*cursor != '\0') {
+        while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') {
+            cursor++;
+        }
+        size_t len = strcspn(cursor, "\r\n");
+        if (len == 0) {
+            break;
+        }
+
+        char line[256];
+        copy_line_summary(cursor, len, line, sizeof(line));
+        if (!search_line_is_result_title(line) && !search_line_is_url(line)) {
+            copy_line_summary(line, strlen(line), summary, summary_size);
+            return;
+        }
+        cursor += len;
+    }
+}
+
 static esp_err_t lock_state(void)
 {
     if (!s_state_mutex) {
@@ -59,6 +126,39 @@ static void unlock_state(void)
     if (s_state_mutex) {
         xSemaphoreGive(s_state_mutex);
     }
+}
+
+static void mark_dirty_region(uint32_t region_bits)
+{
+    if (lock_state() == ESP_OK) {
+        if ((region_bits & DISPLAY_DIRTY_FULL) != 0) {
+            s_dirty_regions = DISPLAY_DIRTY_FULL;
+        } else if ((s_dirty_regions & DISPLAY_DIRTY_FULL) == 0) {
+            s_dirty_regions |= region_bits;
+        }
+        unlock_state();
+    }
+}
+
+static uint32_t take_dirty_regions(void)
+{
+    uint32_t regions = 0;
+    if (lock_state() == ESP_OK) {
+        regions = s_dirty_regions;
+        s_dirty_regions = 0;
+        unlock_state();
+    }
+    return regions;
+}
+
+static epaper_waveshare_2in9_v2_rect_t full_physical_rect(void)
+{
+    return (epaper_waveshare_2in9_v2_rect_t){
+        .x = 0,
+        .y = 0,
+        .width = EPAPER_2IN9_V2_WIDTH,
+        .height = EPAPER_2IN9_V2_HEIGHT,
+    };
 }
 
 static esp_err_t save_state_locked(void)
@@ -175,7 +275,18 @@ static esp_err_t load_state_locked(void)
     return ESP_OK;
 }
 
-static void format_local_datetime(char *date, size_t date_size, char *time_text, size_t time_size)
+static const char *weekday_zh(int weekday)
+{
+    static const char *names[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+    if (weekday < 0 || weekday > 6) {
+        return "";
+    }
+    return names[weekday];
+}
+
+static void format_local_datetime(char *date, size_t date_size,
+                                  char *weekday, size_t weekday_size,
+                                  char *time_text, size_t time_size)
 {
     time_t now = time(NULL);
     struct tm local;
@@ -184,15 +295,44 @@ static void format_local_datetime(char *date, size_t date_size, char *time_text,
         if (date_size > 0) {
             date[0] = '\0';
         }
+        if (weekday_size > 0) {
+            weekday[0] = '\0';
+        }
         snprintf(time_text, time_size, "Time syncing...");
         return;
     }
 
     strftime(date, date_size, "%Y-%m-%d", &local);
+    snprintf(weekday, weekday_size, "%s", weekday_zh(local.tm_wday));
     strftime(time_text, time_size, "%H:%M", &local);
 }
 
-static esp_err_t render_current_dashboard(void)
+static esp_err_t build_dashboard_data(mimi_display_state_t *snapshot,
+                                      char *date, size_t date_size,
+                                      char *weekday, size_t weekday_size,
+                                      char *time_text, size_t time_size,
+                                      display_dashboard_data_t *data)
+{
+    esp_err_t err = display_service_get_state(snapshot);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    format_local_datetime(date, date_size, weekday, weekday_size, time_text, time_size);
+    memset(data, 0, sizeof(*data));
+    data->date = date;
+    data->weekday = weekday;
+    data->time = time_text;
+    data->weather_city = snapshot->weather_city;
+    data->weather_summary = snapshot->weather_summary;
+    data->todo_count = snapshot->todo_count;
+    for (size_t i = 0; i < snapshot->todo_count && i < MIMI_DISPLAY_MAX_TODOS; i++) {
+        data->todos[i] = snapshot->todos[i];
+    }
+    return ESP_OK;
+}
+
+static esp_err_t render_dashboard_regions(uint32_t dirty_regions)
 {
 #if MIMI_DISPLAY_ENABLED
     if (!s_state.display_available) {
@@ -200,31 +340,40 @@ static esp_err_t render_current_dashboard(void)
     }
 
     mimi_display_state_t snapshot;
-    esp_err_t err = display_service_get_state(&snapshot);
+    char date[16];
+    char weekday[8];
+    char time_text[16];
+    display_dashboard_data_t data;
+    esp_err_t err = build_dashboard_data(&snapshot, date, sizeof(date), weekday, sizeof(weekday),
+                                         time_text, sizeof(time_text), &data);
     if (err != ESP_OK) {
         return err;
     }
 
-    char date[16];
-    char time_text[16];
-    format_local_datetime(date, sizeof(date), time_text, sizeof(time_text));
-
-    display_dashboard_data_t data = {
-        .date = date,
-        .time = time_text,
-        .weather_city = snapshot.weather_city,
-        .weather_summary = snapshot.weather_summary,
-        .todo_count = snapshot.todo_count,
-    };
-    for (size_t i = 0; i < snapshot.todo_count && i < MIMI_DISPLAY_MAX_TODOS; i++) {
-        data.todos[i] = snapshot.todos[i];
+    if ((dirty_regions & DISPLAY_DIRTY_FULL) != 0) {
+        display_render_dashboard(s_framebuffer, sizeof(s_framebuffer), &data);
+        return epaper_waveshare_2in9_v2_display_frame(s_framebuffer, sizeof(s_framebuffer));
     }
 
-    display_render_dashboard(s_framebuffer, sizeof(s_framebuffer), &data);
-    return epaper_waveshare_2in9_v2_display_frame(s_framebuffer, sizeof(s_framebuffer));
+    if ((dirty_regions & DISPLAY_DIRTY_HEADER) != 0) {
+        display_render_dashboard_region(s_framebuffer, sizeof(s_framebuffer), &data, DISPLAY_RENDER_REGION_HEADER);
+    }
+    if ((dirty_regions & DISPLAY_DIRTY_WEATHER) != 0) {
+        display_render_dashboard_region(s_framebuffer, sizeof(s_framebuffer), &data, DISPLAY_RENDER_REGION_WEATHER);
+    }
+    if ((dirty_regions & DISPLAY_DIRTY_TODOS) != 0) {
+        display_render_dashboard_region(s_framebuffer, sizeof(s_framebuffer), &data, DISPLAY_RENDER_REGION_TODOS);
+    }
+
+    return epaper_waveshare_2in9_v2_display_region(s_framebuffer, sizeof(s_framebuffer), full_physical_rect());
 #else
     return ESP_ERR_NOT_SUPPORTED;
 #endif
+}
+
+static esp_err_t render_current_dashboard(void)
+{
+    return render_dashboard_regions(DISPLAY_DIRTY_FULL);
 }
 
 static void mark_display_available(bool available)
@@ -280,7 +429,15 @@ static void display_task(void *arg)
             continue;
         }
 
-        esp_err_t err = render_current_dashboard();
+        uint32_t dirty_regions = take_dirty_regions();
+        if (dirty_regions == 0) {
+            if ((bits & DISPLAY_EVENT_REFRESH) != 0) {
+                continue;
+            }
+            dirty_regions = DISPLAY_DIRTY_HEADER;
+        }
+
+        esp_err_t err = render_dashboard_regions(dirty_regions);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "dashboard render failed: %s", esp_err_to_name(err));
         }
@@ -350,12 +507,76 @@ esp_err_t display_service_start(void)
     return ESP_OK;
 }
 
-esp_err_t display_service_request_refresh(void)
+static esp_err_t request_refresh_for_dirty_region(uint32_t region_bits)
 {
     if (!s_display_events) {
         return ESP_ERR_INVALID_STATE;
     }
+    mark_dirty_region(region_bits);
     xEventGroupSetBits(s_display_events, DISPLAY_EVENT_REFRESH);
+    return ESP_OK;
+}
+
+esp_err_t display_service_request_refresh(void)
+{
+    return request_refresh_for_dirty_region(DISPLAY_DIRTY_FULL);
+}
+
+static void display_boot_auto_update_task(void *arg)
+{
+    display_boot_update_ctx_t *ctx = (display_boot_update_ctx_t *)arg;
+    char ip_address[16] = {0};
+    if (ctx) {
+        snprintf(ip_address, sizeof(ip_address), "%s", ctx->ip_address);
+        free(ctx);
+    }
+
+    ESP_LOGI(TAG, "boot display auto-update started for ip=%s", ip_address[0] ? ip_address : "unknown");
+
+    char time_output[128];
+    esp_err_t time_err = tool_get_time_execute("{\"timezone\":\"Asia/Shanghai\"}", time_output, sizeof(time_output));
+    if (time_err == ESP_OK) {
+        request_refresh_for_dirty_region(DISPLAY_DIRTY_HEADER);
+    } else {
+        ESP_LOGW(TAG, "boot time update failed: %s", esp_err_to_name(time_err));
+    }
+
+    char query[160];
+    snprintf(query, sizeof(query), "{\"query\":\"根据公网IP %s 判断当前位置并给出当前天气，返回城市和天气摘要\"}",
+             ip_address[0] ? ip_address : "当前网络");
+
+    char search_output[1024];
+    esp_err_t search_err = tool_web_search_execute(query, search_output, sizeof(search_output));
+    if (search_err == ESP_OK) {
+        char summary[MIMI_DISPLAY_WEATHER_SUMMARY_LEN];
+        extract_search_summary(search_output, summary, sizeof(summary));
+        if (summary[0] != '\0') {
+            display_service_set_weather("当前位置", summary, current_epoch_or_zero());
+        }
+    } else {
+        ESP_LOGW(TAG, "boot weather search failed: %s", esp_err_to_name(search_err));
+    }
+
+    vTaskDelete(NULL);
+}
+
+esp_err_t display_service_start_boot_auto_update(const char *ip_address)
+{
+    display_boot_update_ctx_t *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) {
+        return ESP_ERR_NO_MEM;
+    }
+    if (ip_address) {
+        snprintf(ctx->ip_address, sizeof(ctx->ip_address), "%s", ip_address);
+    }
+
+    BaseType_t ok = xTaskCreate(display_boot_auto_update_task, "disp_boot_update",
+                                DISPLAY_BOOT_UPDATE_STACK, ctx,
+                                DISPLAY_BOOT_UPDATE_PRIO, NULL);
+    if (ok != pdPASS) {
+        free(ctx);
+        return ESP_FAIL;
+    }
     return ESP_OK;
 }
 
@@ -383,7 +604,7 @@ esp_err_t display_service_set_weather_city(const char *city)
     err = save_state_locked();
     unlock_state();
 
-    display_service_request_refresh();
+    request_refresh_for_dirty_region(DISPLAY_DIRTY_WEATHER);
     return err;
 }
 
@@ -405,7 +626,7 @@ esp_err_t display_service_set_weather(const char *city, const char *summary, int
     err = save_state_locked();
     unlock_state();
 
-    display_service_request_refresh();
+    request_refresh_for_dirty_region(DISPLAY_DIRTY_WEATHER);
     return err;
 }
 
@@ -433,7 +654,7 @@ esp_err_t display_service_set_todos(const char *const *todos, size_t todo_count,
     err = save_state_locked();
     unlock_state();
 
-    display_service_request_refresh();
+    request_refresh_for_dirty_region(DISPLAY_DIRTY_TODOS);
     return err;
 }
 

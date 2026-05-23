@@ -26,9 +26,19 @@ typedef struct {
     int busy_timeout_ms;
 } epaper_waveshare_2in9_v2_config_t;
 
+typedef struct {
+    int x;
+    int y;
+    int width;
+    int height;
+} epaper_waveshare_2in9_v2_rect_t;
+
 esp_err_t epaper_waveshare_2in9_v2_init(void);
 esp_err_t epaper_waveshare_2in9_v2_init_with_config(const epaper_waveshare_2in9_v2_config_t *config);
 esp_err_t epaper_waveshare_2in9_v2_display_frame(const uint8_t *framebuffer, size_t framebuffer_len);
+esp_err_t epaper_waveshare_2in9_v2_display_region(const uint8_t *framebuffer,
+                                                  size_t framebuffer_len,
+                                                  epaper_waveshare_2in9_v2_rect_t rect);
 esp_err_t epaper_waveshare_2in9_v2_sleep(void);
 esp_err_t epaper_waveshare_2in9_v2_test_pattern(void);
 

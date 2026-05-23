@@ -46,6 +46,8 @@ esp_err_t display_service_start(void);
  */
 esp_err_t display_service_request_refresh(void);
 
+esp_err_t display_service_start_boot_auto_update(const char *ip_address);
+
 /**
  * Render the current dashboard immediately when display hardware is available.
  */

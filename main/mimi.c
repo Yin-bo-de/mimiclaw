@@ -162,6 +162,10 @@ void app_main(void)
         if (wifi_manager_wait_connected(30000) == ESP_OK) {
             wifi_ok = true;
             ESP_LOGI(TAG, "WiFi connected: %s", wifi_manager_get_ip());
+            display_err = display_service_start_boot_auto_update(wifi_manager_get_ip());
+            if (display_err != ESP_OK) {
+                ESP_LOGW(TAG, "Display boot auto-update start failed: %s", esp_err_to_name(display_err));
+            }
         } else {
             ESP_LOGW(TAG, "WiFi connection timeout");
         }

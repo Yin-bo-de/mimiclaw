@@ -18,6 +18,18 @@
 #define HEADER_TEXT_WIDTH (DISPLAY_RENDER_WIDTH - 12)
 #define WEATHER_TEXT_WIDTH (158 - WEATHER_TEXT_X - 4)
 #define TODO_TEXT_WIDTH (DISPLAY_RENDER_WIDTH - TODO_TEXT_X - 6)
+#define HEADER_REGION_X 1
+#define HEADER_REGION_Y 1
+#define HEADER_REGION_WIDTH (DISPLAY_RENDER_WIDTH - 2)
+#define HEADER_REGION_HEIGHT 20
+#define WEATHER_REGION_X 1
+#define WEATHER_REGION_Y 22
+#define WEATHER_REGION_WIDTH 157
+#define WEATHER_REGION_HEIGHT (DISPLAY_RENDER_HEIGHT - 23)
+#define TODOS_REGION_X 159
+#define TODOS_REGION_Y 22
+#define TODOS_REGION_WIDTH (DISPLAY_RENDER_WIDTH - 160)
+#define TODOS_REGION_HEIGHT (DISPLAY_RENDER_HEIGHT - 23)
 #define DISPLAY_COLOR_BLACK 0x00
 #define DISPLAY_COLOR_WHITE 0x01
 
@@ -329,6 +341,20 @@ void display_render_clear(uint8_t *framebuffer, size_t framebuffer_len, bool whi
     memset(framebuffer, white ? 0x55 : 0x00, DISPLAY_RENDER_FB_BYTES);
 }
 
+void display_render_clear_region(uint8_t *framebuffer, size_t framebuffer_len,
+                                 int x, int y, int width, int height, bool white)
+{
+    if (!framebuffer_is_valid(framebuffer, framebuffer_len) || width <= 0 || height <= 0) {
+        return;
+    }
+
+    for (int row = 0; row < height; row++) {
+        for (int col = 0; col < width; col++) {
+            display_render_draw_pixel(framebuffer, framebuffer_len, x + col, y + row, !white);
+        }
+    }
+}
+
 void display_render_draw_pixel(uint8_t *framebuffer, size_t framebuffer_len, int x, int y, bool black)
 {
     if (!framebuffer_is_valid(framebuffer, framebuffer_len)) {
@@ -398,6 +424,16 @@ static void draw_ascii_glyph(uint8_t *framebuffer, size_t framebuffer_len, int x
     }
 }
 
+static void draw_enhanced_zh_pixel(uint8_t *framebuffer, size_t framebuffer_len,
+                                   int x, int y, int col, int row, bool black)
+{
+    display_render_draw_pixel(framebuffer, framebuffer_len, x + col, y + row, black);
+
+    if (col + 1 < ZH_FONT_WIDTH) {
+        display_render_draw_pixel(framebuffer, framebuffer_len, x + col + 1, y + row, black);
+    }
+}
+
 static void draw_zh12_glyph(uint8_t *framebuffer, size_t framebuffer_len, int x, int y,
                             const display_zh12_glyph_t *glyph, bool black)
 {
@@ -405,7 +441,7 @@ static void draw_zh12_glyph(uint8_t *framebuffer, size_t framebuffer_len, int x,
         uint16_t row_bits = ((uint16_t)glyph->bitmap[row * 2] << 8) | glyph->bitmap[row * 2 + 1];
         for (int col = 0; col < ZH_FONT_WIDTH; col++) {
             if ((row_bits & (uint16_t)(0x8000 >> col)) != 0) {
-                display_render_draw_pixel(framebuffer, framebuffer_len, x + col, y + row, black);
+                draw_enhanced_zh_pixel(framebuffer, framebuffer_len, x, y, col, row, black);
             }
         }
     }
@@ -466,29 +502,35 @@ static void draw_text_line(uint8_t *framebuffer, size_t framebuffer_len, int x, 
     display_render_draw_text(framebuffer, framebuffer_len, x, y, line, true);
 }
 
-void display_render_dashboard(uint8_t *framebuffer, size_t framebuffer_len, const display_dashboard_data_t *data)
+static void render_header_region(uint8_t *framebuffer, size_t framebuffer_len,
+                                 const display_dashboard_data_t *data)
 {
-    if (!framebuffer_is_valid(framebuffer, framebuffer_len)) {
-        return;
-    }
-    display_render_clear(framebuffer, framebuffer_len, true);
-
-    display_render_draw_rect(framebuffer, framebuffer_len, 0, 0, DISPLAY_RENDER_WIDTH, DISPLAY_RENDER_HEIGHT, true);
-    display_render_draw_hline(framebuffer, framebuffer_len, 0, 21, DISPLAY_RENDER_WIDTH, true);
-    display_render_draw_vline(framebuffer, framebuffer_len, 158, 21, DISPLAY_RENDER_HEIGHT - 21, true);
+    display_render_clear_region(framebuffer, framebuffer_len,
+                                HEADER_REGION_X, HEADER_REGION_Y,
+                                HEADER_REGION_WIDTH, HEADER_REGION_HEIGHT, true);
 
     const char *date = (data && data->date && data->date[0] != '\0') ? data->date : "";
+    const char *weekday = (data && data->weekday && data->weekday[0] != '\0') ? data->weekday : "";
     const char *time = (data && data->time && data->time[0] != '\0') ? data->time : "Time syncing...";
     char header_raw[80];
     char header[80];
-    if (date[0] != '\0') {
+    if (date[0] != '\0' && weekday[0] != '\0') {
+        snprintf(header_raw, sizeof(header_raw), "%s %s  %s", date, weekday, time);
+    } else if (date[0] != '\0') {
         snprintf(header_raw, sizeof(header_raw), "%s  %s", date, time);
     } else {
         snprintf(header_raw, sizeof(header_raw), "%s", time);
     }
     truncate_text_for_width(header_raw, header, sizeof(header), HEADER_TEXT_WIDTH);
     display_render_draw_text(framebuffer, framebuffer_len, HEADER_TEXT_X, 7, header, true);
+}
 
+static void render_weather_region(uint8_t *framebuffer, size_t framebuffer_len,
+                                  const display_dashboard_data_t *data)
+{
+    display_render_clear_region(framebuffer, framebuffer_len,
+                                WEATHER_REGION_X, WEATHER_REGION_Y,
+                                WEATHER_REGION_WIDTH, WEATHER_REGION_HEIGHT, true);
     bool has_weather = data && data->weather_city && data->weather_city[0] != '\0';
     draw_text_line(framebuffer, framebuffer_len, WEATHER_TEXT_X, 31, WEATHER_TEXT_WIDTH,
                    "Weather: ", has_weather ? data->weather_city : "set city in chat");
@@ -496,7 +538,14 @@ void display_render_dashboard(uint8_t *framebuffer, size_t framebuffer_len, cons
         draw_text_line(framebuffer, framebuffer_len, WEATHER_TEXT_X, 31 + LINE_HEIGHT, WEATHER_TEXT_WIDTH,
                        "", data->weather_summary);
     }
+}
 
+static void render_todos_region(uint8_t *framebuffer, size_t framebuffer_len,
+                                const display_dashboard_data_t *data)
+{
+    display_render_clear_region(framebuffer, framebuffer_len,
+                                TODOS_REGION_X, TODOS_REGION_Y,
+                                TODOS_REGION_WIDTH, TODOS_REGION_HEIGHT, true);
     display_render_draw_text(framebuffer, framebuffer_len, TODO_TEXT_X, 31, "Todos", true);
     display_render_draw_hline(framebuffer, framebuffer_len, TODO_TEXT_X, 41, 42, true);
 
@@ -518,4 +567,44 @@ void display_render_dashboard(uint8_t *framebuffer, size_t framebuffer_len, cons
         draw_text_line(framebuffer, framebuffer_len, TODO_TEXT_X, 52 + (int)i * LINE_HEIGHT,
                        TODO_TEXT_WIDTH, "- ", todo);
     }
+}
+
+void display_render_dashboard_region(uint8_t *framebuffer, size_t framebuffer_len,
+                                     const display_dashboard_data_t *data,
+                                     display_render_region_t region)
+{
+    if (!framebuffer_is_valid(framebuffer, framebuffer_len)) {
+        return;
+    }
+
+    switch (region) {
+    case DISPLAY_RENDER_REGION_HEADER:
+        render_header_region(framebuffer, framebuffer_len, data);
+        break;
+    case DISPLAY_RENDER_REGION_WEATHER:
+        render_weather_region(framebuffer, framebuffer_len, data);
+        break;
+    case DISPLAY_RENDER_REGION_TODOS:
+        render_todos_region(framebuffer, framebuffer_len, data);
+        break;
+    case DISPLAY_RENDER_REGION_FULL:
+    default:
+        display_render_dashboard(framebuffer, framebuffer_len, data);
+        break;
+    }
+}
+
+void display_render_dashboard(uint8_t *framebuffer, size_t framebuffer_len, const display_dashboard_data_t *data)
+{
+    if (!framebuffer_is_valid(framebuffer, framebuffer_len)) {
+        return;
+    }
+    display_render_clear(framebuffer, framebuffer_len, true);
+
+    display_render_draw_rect(framebuffer, framebuffer_len, 0, 0, DISPLAY_RENDER_WIDTH, DISPLAY_RENDER_HEIGHT, true);
+    display_render_draw_hline(framebuffer, framebuffer_len, 0, 21, DISPLAY_RENDER_WIDTH, true);
+    display_render_draw_vline(framebuffer, framebuffer_len, 158, 21, DISPLAY_RENDER_HEIGHT - 21, true);
+    render_header_region(framebuffer, framebuffer_len, data);
+    render_weather_region(framebuffer, framebuffer_len, data);
+    render_todos_region(framebuffer, framebuffer_len, data);
 }

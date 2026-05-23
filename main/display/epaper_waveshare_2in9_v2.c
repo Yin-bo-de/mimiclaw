@@ -363,6 +363,33 @@ esp_err_t epaper_waveshare_2in9_v2_display_frame(const uint8_t *framebuffer, siz
     return ESP_OK;
 }
 
+static bool epaper_rect_is_valid(epaper_waveshare_2in9_v2_rect_t rect)
+{
+    if (rect.width <= 0 || rect.height <= 0) {
+        return false;
+    }
+    if (rect.x < 0 || rect.y < 0) {
+        return false;
+    }
+    if (rect.x > EPAPER_2IN9_V2_WIDTH - rect.width || rect.y > EPAPER_2IN9_V2_HEIGHT - rect.height) {
+        return false;
+    }
+    return true;
+}
+
+esp_err_t epaper_waveshare_2in9_v2_display_region(const uint8_t *framebuffer,
+                                                  size_t framebuffer_len,
+                                                  epaper_waveshare_2in9_v2_rect_t rect)
+{
+    if (!epaper_rect_is_valid(rect)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ESP_LOGI(TAG, "region refresh requested x=%d y=%d w=%d h=%d; using safe full-frame commit",
+             rect.x, rect.y, rect.width, rect.height);
+    return epaper_waveshare_2in9_v2_display_frame(framebuffer, framebuffer_len);
+}
+
 esp_err_t epaper_waveshare_2in9_v2_sleep(void)
 {
     if (!s_initialized || !s_spi) {
