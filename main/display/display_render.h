@@ -1,0 +1,36 @@
+#pragma once
+
+#include "mimi_config.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define DISPLAY_RENDER_WIDTH      MIMI_DISPLAY_WIDTH
+#define DISPLAY_RENDER_HEIGHT     MIMI_DISPLAY_HEIGHT
+#define DISPLAY_RENDER_FB_BYTES   MIMI_DISPLAY_FB_BYTES
+
+typedef struct {
+    const char *date;
+    const char *time;
+    const char *weather_city;
+    const char *weather_summary;
+    const char *todos[5];
+    size_t todo_count;
+} display_dashboard_data_t;
+
+void display_render_clear(uint8_t *framebuffer, size_t framebuffer_len, bool white);
+void display_render_draw_pixel(uint8_t *framebuffer, size_t framebuffer_len, int x, int y, bool black);
+void display_render_draw_hline(uint8_t *framebuffer, size_t framebuffer_len, int x, int y, int width, bool black);
+void display_render_draw_vline(uint8_t *framebuffer, size_t framebuffer_len, int x, int y, int height, bool black);
+void display_render_draw_rect(uint8_t *framebuffer, size_t framebuffer_len, int x, int y, int width, int height, bool black);
+int display_render_draw_text(uint8_t *framebuffer, size_t framebuffer_len, int x, int y, const char *text, bool black);
+void display_render_dashboard(uint8_t *framebuffer, size_t framebuffer_len, const display_dashboard_data_t *data);
+
+#ifdef __cplusplus
+}
+#endif

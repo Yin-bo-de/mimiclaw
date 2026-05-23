@@ -26,6 +26,7 @@
 #include "heartbeat/heartbeat.h"
 #include "skills/skill_loader.h"
 #include "onboard/wifi_onboard.h"
+#include "display/display_service.h"
 
 static const char *TAG = "mimi";
 
@@ -122,6 +123,12 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(init_spiffs());
 
+    /* Display service persists dashboard state even if hardware is absent. */
+    esp_err_t display_err = display_service_init();
+    if (display_err != ESP_OK) {
+        ESP_LOGW(TAG, "Display service init failed: %s; continuing", esp_err_to_name(display_err));
+    }
+
     /* Initialize subsystems */
     ESP_ERROR_CHECK(message_bus_init());
     ESP_ERROR_CHECK(memory_store_init());
@@ -139,6 +146,11 @@ void app_main(void)
 
     /* Start Serial CLI first (works without WiFi) */
     ESP_ERROR_CHECK(serial_cli_init());
+
+    display_err = display_service_start();
+    if (display_err != ESP_OK) {
+        ESP_LOGW(TAG, "Display service start failed: %s; continuing", esp_err_to_name(display_err));
+    }
 
     /* Start WiFi */
     esp_err_t wifi_err = wifi_manager_start();

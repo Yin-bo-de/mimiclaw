@@ -1,4 +1,5 @@
 #include "tools/gpio_policy.h"
+#include "mimi_config.h"
 
 #include "driver/gpio.h"
 
@@ -47,6 +48,18 @@ static bool pin_in_allowlist(int pin, const char *csv)
     return false;
 }
 
+static bool pin_is_display_reserved(int pin)
+{
+#if MIMI_DISPLAY_ENABLED
+    return pin == MIMI_DISPLAY_PIN_MOSI || pin == MIMI_DISPLAY_PIN_SCLK ||
+           pin == MIMI_DISPLAY_PIN_CS || pin == MIMI_DISPLAY_PIN_DC ||
+           pin == MIMI_DISPLAY_PIN_RST || pin == MIMI_DISPLAY_PIN_BUSY;
+#else
+    (void)pin;
+    return false;
+#endif
+}
+
 static bool pin_is_allowed_impl(int pin,
                                 const char *allowlist_csv,
                                 int min_pin,
@@ -57,6 +70,10 @@ static bool pin_is_allowed_impl(int pin,
     bool in_policy;
 
     if (pin < 0) {
+        return false;
+    }
+
+    if (pin_is_display_reserved(pin)) {
         return false;
     }
 
@@ -99,6 +116,15 @@ bool gpio_policy_pin_is_allowed(int pin)
 
 bool gpio_policy_pin_forbidden_hint(int pin, char *result, size_t result_len)
 {
+    if (pin_is_display_reserved(pin)) {
+        snprintf(result, result_len,
+                 "Error: pin %d is reserved for the e-paper display (MOSI=%d,SCLK=%d,CS=%d,DC=%d,RST=%d,BUSY=%d); choose a different pin",
+                 pin, MIMI_DISPLAY_PIN_MOSI, MIMI_DISPLAY_PIN_SCLK,
+                 MIMI_DISPLAY_PIN_CS, MIMI_DISPLAY_PIN_DC,
+                 MIMI_DISPLAY_PIN_RST, MIMI_DISPLAY_PIN_BUSY);
+        return true;
+    }
+
 #if defined(CONFIG_IDF_TARGET_ESP32)
     if (pin >= 6 && pin <= 11) {
         snprintf(result, result_len,

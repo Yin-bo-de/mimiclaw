@@ -5,6 +5,7 @@
 #include "tools/tool_files.h"
 #include "tools/tool_cron.h"
 #include "tools/tool_gpio.h"
+#include "tools/tool_display.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -12,7 +13,7 @@
 
 static const char *TAG = "tools";
 
-#define MAX_TOOLS 16
+#define MAX_TOOLS 24
 
 static mimi_tool_t s_tools[MAX_TOOLS];
 static int s_tool_count = 0;
@@ -213,6 +214,69 @@ esp_err_t tool_registry_init(void)
         .execute = tool_gpio_read_all_execute,
     };
     register_tool(&ga);
+
+    /* Register display dashboard tools */
+    tool_display_init();
+
+    mimi_tool_t dsc = {
+        .name = "display_set_weather_city",
+        .description = "Set the dashboard weather city. Use when the user chooses or changes their weather city.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"city\":{\"type\":\"string\",\"description\":\"Weather city to show on the e-paper dashboard\"}},"
+            "\"required\":[\"city\"]}",
+        .execute = tool_display_set_weather_city_execute,
+    };
+    register_tool(&dsc);
+
+    mimi_tool_t dsw = {
+        .name = "display_set_weather",
+        .description = "Save current weather summary to the e-paper dashboard after looking it up.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"city\":{\"type\":\"string\",\"description\":\"Weather city\"},"
+            "\"summary\":{\"type\":\"string\",\"description\":\"Short display-safe weather summary\"},"
+            "\"updated_epoch\":{\"type\":\"integer\",\"description\":\"Optional unix timestamp for this weather data\"}},"
+            "\"required\":[\"summary\"]}",
+        .execute = tool_display_set_weather_execute,
+    };
+    register_tool(&dsw);
+
+    mimi_tool_t dst = {
+        .name = "display_set_todos",
+        .description = "Replace e-paper dashboard todos with a short generated or user-provided todo list.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"todos\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Todo strings; only the first display-sized items are shown\"},"
+            "\"updated_epoch\":{\"type\":\"integer\",\"description\":\"Optional unix timestamp for this todo list\"}},"
+            "\"required\":[\"todos\"]}",
+        .execute = tool_display_set_todos_execute,
+    };
+    register_tool(&dst);
+
+    mimi_tool_t dgs = {
+        .name = "display_get_state",
+        .description = "Get current e-paper dashboard state as JSON, including weather, todos, and display availability.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{},"
+            "\"required\":[]}",
+        .execute = tool_display_get_state_execute,
+    };
+    register_tool(&dgs);
+
+    mimi_tool_t dr = {
+        .name = "display_refresh",
+        .description = "Request an e-paper dashboard refresh. Use now=true only when an immediate hardware refresh is needed.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"now\":{\"type\":\"boolean\",\"description\":\"If true, refresh immediately instead of queueing\"}},"
+            "\"required\":[]}",
+        .execute = tool_display_refresh_execute,
+    };
+    register_tool(&dr);
 
     build_tools_json();
 

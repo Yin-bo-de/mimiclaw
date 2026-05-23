@@ -120,6 +120,26 @@
 /* GPIO */
 #define MIMI_GPIO_CONFIG_SECTION     1   /* enable GPIO tools */
 
+/* Display / Waveshare 2.9" V2 e-paper */
+#define MIMI_DISPLAY_ENABLED         1
+#define MIMI_DISPLAY_WIDTH           296
+#define MIMI_DISPLAY_HEIGHT          128
+#define MIMI_DISPLAY_FB_BYTES        ((MIMI_DISPLAY_WIDTH * MIMI_DISPLAY_HEIGHT) / 8)
+#define MIMI_DISPLAY_SPI_HOST        SPI2_HOST
+#define MIMI_DISPLAY_PIN_MOSI        11
+#define MIMI_DISPLAY_PIN_SCLK        12
+#define MIMI_DISPLAY_PIN_CS          13
+#define MIMI_DISPLAY_PIN_DC          14
+#define MIMI_DISPLAY_PIN_RST         15
+#define MIMI_DISPLAY_PIN_BUSY        16
+#define MIMI_DISPLAY_SPI_CLOCK_HZ    (4 * 1000 * 1000)
+#define MIMI_DISPLAY_REFRESH_MS      (5 * 60 * 1000)
+#define MIMI_DISPLAY_BUSY_TIMEOUT_MS (30 * 1000)
+#define MIMI_DISPLAY_TASK_STACK      (4 * 1024)
+#define MIMI_DISPLAY_TASK_PRIO       3
+#define MIMI_DISPLAY_TASK_CORE       1
+#define MIMI_DISPLAY_STATE_FILE      MIMI_SPIFFS_BASE "/display_state.json"
+
 /* Skills */
 #define MIMI_SKILLS_PREFIX           MIMI_SPIFFS_BASE "/skills/"
 
