@@ -53,7 +53,8 @@ static bool pin_is_display_reserved(int pin)
 #if MIMI_DISPLAY_ENABLED
     return pin == MIMI_DISPLAY_PIN_MOSI || pin == MIMI_DISPLAY_PIN_SCLK ||
            pin == MIMI_DISPLAY_PIN_CS || pin == MIMI_DISPLAY_PIN_DC ||
-           pin == MIMI_DISPLAY_PIN_RST || pin == MIMI_DISPLAY_PIN_BUSY;
+           pin == MIMI_DISPLAY_PIN_RST || pin == MIMI_DISPLAY_PIN_BUSY ||
+           (MIMI_DISPLAY_PIN_PWR >= 0 && pin == MIMI_DISPLAY_PIN_PWR);
 #else
     (void)pin;
     return false;
@@ -117,11 +118,20 @@ bool gpio_policy_pin_is_allowed(int pin)
 bool gpio_policy_pin_forbidden_hint(int pin, char *result, size_t result_len)
 {
     if (pin_is_display_reserved(pin)) {
-        snprintf(result, result_len,
-                 "Error: pin %d is reserved for the e-paper display (MOSI=%d,SCLK=%d,CS=%d,DC=%d,RST=%d,BUSY=%d); choose a different pin",
-                 pin, MIMI_DISPLAY_PIN_MOSI, MIMI_DISPLAY_PIN_SCLK,
-                 MIMI_DISPLAY_PIN_CS, MIMI_DISPLAY_PIN_DC,
-                 MIMI_DISPLAY_PIN_RST, MIMI_DISPLAY_PIN_BUSY);
+        if (MIMI_DISPLAY_PIN_PWR >= 0) {
+            snprintf(result, result_len,
+                     "Error: pin %d is reserved for the e-paper display (MOSI=%d,SCLK=%d,CS=%d,DC=%d,RST=%d,BUSY=%d,PWR=%d); choose a different pin",
+                     pin, MIMI_DISPLAY_PIN_MOSI, MIMI_DISPLAY_PIN_SCLK,
+                     MIMI_DISPLAY_PIN_CS, MIMI_DISPLAY_PIN_DC,
+                     MIMI_DISPLAY_PIN_RST, MIMI_DISPLAY_PIN_BUSY,
+                     MIMI_DISPLAY_PIN_PWR);
+        } else {
+            snprintf(result, result_len,
+                     "Error: pin %d is reserved for the e-paper display (MOSI=%d,SCLK=%d,CS=%d,DC=%d,RST=%d,BUSY=%d); choose a different pin",
+                     pin, MIMI_DISPLAY_PIN_MOSI, MIMI_DISPLAY_PIN_SCLK,
+                     MIMI_DISPLAY_PIN_CS, MIMI_DISPLAY_PIN_DC,
+                     MIMI_DISPLAY_PIN_RST, MIMI_DISPLAY_PIN_BUSY);
+        }
         return true;
     }
 

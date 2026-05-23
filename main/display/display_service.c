@@ -246,6 +246,14 @@ static void display_task(void *arg)
         if (err == ESP_OK) {
             mark_display_available(true);
             ESP_LOGI(TAG, "display driver ready");
+#if MIMI_DISPLAY_DIAGNOSTIC_BOOT_PATTERN
+            esp_err_t diagnostic_err = epaper_waveshare_2in9_v2_test_pattern();
+            if (diagnostic_err != ESP_OK) {
+                ESP_LOGW(TAG, "diagnostic display pattern failed: %s", esp_err_to_name(diagnostic_err));
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(2000));
+            }
+#endif
             esp_err_t render_err = render_current_dashboard();
             if (render_err != ESP_OK) {
                 ESP_LOGW(TAG, "initial dashboard render failed: %s", esp_err_to_name(render_err));

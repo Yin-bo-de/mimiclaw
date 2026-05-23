@@ -10,21 +10,22 @@
 #include <stdbool.h>
 #include <string.h>
 
-static const char *TAG = "epaper_2in9_v2";
+static const char *TAG = "epaper_2in9_g";
 
-#define EPD_CMD_DRIVER_OUTPUT_CONTROL          0x01
-#define EPD_CMD_GATE_DRIVING_VOLTAGE           0x03
-#define EPD_CMD_SOURCE_DRIVING_VOLTAGE         0x04
-#define EPD_CMD_DATA_ENTRY_MODE                0x11
-#define EPD_CMD_SW_RESET                       0x12
-#define EPD_CMD_MASTER_ACTIVATION              0x20
-#define EPD_CMD_DISPLAY_UPDATE_CONTROL_2       0x22
-#define EPD_CMD_WRITE_RAM_BW                   0x24
-#define EPD_CMD_BORDER_WAVEFORM                0x3C
-#define EPD_CMD_SET_RAM_X_ADDRESS_START_END    0x44
-#define EPD_CMD_SET_RAM_Y_ADDRESS_START_END    0x45
-#define EPD_CMD_SET_RAM_X_ADDRESS_COUNTER      0x4E
-#define EPD_CMD_SET_RAM_Y_ADDRESS_COUNTER      0x4F
+#define EPD_G_CMD_PANEL_SETTING              0x00
+#define EPD_G_CMD_POWER_SETTING              0x01
+#define EPD_G_CMD_POWER_OFF                  0x02
+#define EPD_G_CMD_POWER_ON                   0x04
+#define EPD_G_CMD_DEEP_SLEEP                 0x07
+#define EPD_G_CMD_DATA_START_TRANSMISSION    0x10
+#define EPD_G_CMD_DISPLAY_REFRESH            0x12
+#define EPD_G_CMD_BOOSTER_SOFT_START         0x06
+#define EPD_G_CMD_RESOLUTION_SETTING         0x61
+
+#define EPD_G_COLOR_BLACK                    0x00
+#define EPD_G_COLOR_WHITE                    0x01
+#define EPD_G_COLOR_YELLOW                   0x02
+#define EPD_G_COLOR_RED                      0x03
 
 static spi_device_handle_t s_spi;
 static epaper_waveshare_2in9_v2_config_t s_config;
@@ -37,23 +38,68 @@ static const epaper_waveshare_2in9_v2_config_t DEFAULT_CONFIG = {
     .dc_pin = MIMI_DISPLAY_PIN_DC,
     .rst_pin = MIMI_DISPLAY_PIN_RST,
     .busy_pin = MIMI_DISPLAY_PIN_BUSY,
+    .pwr_pin = MIMI_DISPLAY_PIN_PWR,
     .spi_clock_hz = MIMI_DISPLAY_SPI_CLOCK_HZ,
     .busy_timeout_ms = MIMI_DISPLAY_BUSY_TIMEOUT_MS,
 };
 
-static esp_err_t epaper_wait_busy(const char *stage)
+static int elapsed_ms(TickType_t start)
+{
+    return (int)(pdTICKS_TO_MS(xTaskGetTickCount() - start));
+}
+
+static bool epaper_has_pwr_pin(void)
+{
+    return s_config.pwr_pin >= 0;
+}
+
+static int epaper_get_pwr_level(void)
+{
+    return epaper_has_pwr_pin() ? gpio_get_level(s_config.pwr_pin) : -1;
+}
+
+static esp_err_t epaper_set_pwr_level(int level)
+{
+    return epaper_has_pwr_pin() ? gpio_set_level(s_config.pwr_pin, level) : ESP_OK;
+}
+
+static void epaper_log_levels(const char *stage)
+{
+    ESP_LOGI(TAG, "%s: PWR=%d RST=%d BUSY=%d", stage,
+             epaper_get_pwr_level(),
+             gpio_get_level(s_config.rst_pin),
+             gpio_get_level(s_config.busy_pin));
+}
+
+static TickType_t delay_ticks_at_least_one(int delay_ms)
+{
+    TickType_t ticks = pdMS_TO_TICKS(delay_ms);
+    return ticks > 0 ? ticks : 1;
+}
+
+static esp_err_t epaper_wait_busy_high(const char *stage)
 {
     TickType_t start = xTaskGetTickCount();
     TickType_t timeout = pdMS_TO_TICKS(s_config.busy_timeout_ms);
+    TickType_t poll_delay = delay_ticks_at_least_one(20);
+    int initial_level = gpio_get_level(s_config.busy_pin);
 
-    while (gpio_get_level(s_config.busy_pin) == 1) {
+    vTaskDelay(delay_ticks_at_least_one(100));
+    ESP_LOGI(TAG, "busy-high wait start: %s BUSY=%d", stage, initial_level);
+    while (gpio_get_level(s_config.busy_pin) == 0) {
         if ((xTaskGetTickCount() - start) >= timeout) {
-            ESP_LOGE(TAG, "busy timeout during %s after %d ms", stage, s_config.busy_timeout_ms);
+            ESP_LOGE(TAG, "busy-high timeout during %s after %d ms; BUSY=%d RST=%d PWR=%d",
+                     stage, s_config.busy_timeout_ms,
+                     gpio_get_level(s_config.busy_pin),
+                     gpio_get_level(s_config.rst_pin),
+                     epaper_get_pwr_level());
             return ESP_ERR_TIMEOUT;
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(poll_delay);
     }
 
+    ESP_LOGI(TAG, "busy-high wait done: %s initial=%d final=%d elapsed=%d ms", stage,
+             initial_level, gpio_get_level(s_config.busy_pin), elapsed_ms(start));
     return ESP_OK;
 }
 
@@ -93,92 +139,109 @@ static esp_err_t epaper_write_u8(uint8_t data)
 
 static esp_err_t epaper_reset(void)
 {
+    ESP_RETURN_ON_ERROR(epaper_set_pwr_level(1), TAG, "power high failed");
+    vTaskDelay(pdMS_TO_TICKS(10));
+    epaper_log_levels("reset before drive");
+
     ESP_RETURN_ON_ERROR(gpio_set_level(s_config.rst_pin, 1), TAG, "reset high failed");
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(MIMI_DISPLAY_RESET_HIGH_MS));
+    epaper_log_levels("reset high");
+
     ESP_RETURN_ON_ERROR(gpio_set_level(s_config.rst_pin, 0), TAG, "reset low failed");
-    vTaskDelay(pdMS_TO_TICKS(2));
+    vTaskDelay(pdMS_TO_TICKS(MIMI_DISPLAY_RESET_LOW_MS));
+    epaper_log_levels("reset low");
+
     ESP_RETURN_ON_ERROR(gpio_set_level(s_config.rst_pin, 1), TAG, "reset release failed");
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(MIMI_DISPLAY_RESET_RELEASE_MS));
+    epaper_log_levels("reset released");
     return ESP_OK;
 }
 
-static esp_err_t epaper_set_memory_area(void)
+static esp_err_t epaper_turn_on_display(void)
 {
-    const uint16_t y_end = EPAPER_2IN9_V2_HEIGHT - 1;
-
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_SET_RAM_X_ADDRESS_START_END), TAG, "set x area cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "set x start failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8((EPAPER_2IN9_V2_WIDTH / 8) - 1), TAG, "set x end failed");
-
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_SET_RAM_Y_ADDRESS_START_END), TAG, "set y area cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "set y start low failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "set y start high failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8((uint8_t)(y_end & 0xFF)), TAG, "set y end low failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8((uint8_t)(y_end >> 8)), TAG, "set y end high failed");
-
-    return ESP_OK;
-}
-
-static esp_err_t epaper_set_memory_pointer(void)
-{
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_SET_RAM_X_ADDRESS_COUNTER), TAG, "set x counter cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "set x counter failed");
-
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_SET_RAM_Y_ADDRESS_COUNTER), TAG, "set y counter cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "set y counter low failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "set y counter high failed");
-
-    return epaper_wait_busy("set memory pointer");
-}
-
-static esp_err_t epaper_power_on(void)
-{
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_DISPLAY_UPDATE_CONTROL_2), TAG, "power on update cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0xC0), TAG, "power on update data failed");
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_MASTER_ACTIVATION), TAG, "power on activate failed");
-    return epaper_wait_busy("power on");
-}
-
-static esp_err_t epaper_refresh(void)
-{
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_DISPLAY_UPDATE_CONTROL_2), TAG, "refresh update cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0xC7), TAG, "refresh update data failed");
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_MASTER_ACTIVATION), TAG, "refresh activate failed");
-    return epaper_wait_busy("display refresh");
+    epaper_log_levels("refresh before command");
+    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_G_CMD_DISPLAY_REFRESH), TAG, "refresh cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "refresh data failed");
+    epaper_log_levels("refresh after command");
+    return epaper_wait_busy_high("display refresh");
 }
 
 static esp_err_t epaper_panel_init(void)
 {
-    const uint16_t height_minus_one = EPAPER_2IN9_V2_HEIGHT - 1;
-
-    ESP_LOGI(TAG, "initializing Waveshare 2.9in V2 e-paper");
+    ESP_LOGI(TAG, "initializing Waveshare 2.9in G four-color e-paper");
     ESP_RETURN_ON_ERROR(epaper_reset(), TAG, "hardware reset failed");
-    ESP_RETURN_ON_ERROR(epaper_wait_busy("post reset"), TAG, "post reset busy failed");
+    ESP_RETURN_ON_ERROR(epaper_wait_busy_high("post reset"), TAG, "post reset busy failed");
 
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_SW_RESET), TAG, "sw reset cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_wait_busy("software reset"), TAG, "sw reset busy failed");
+    ESP_RETURN_ON_ERROR(epaper_write_command(0x4D), TAG, "0x4D cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x78), TAG, "0x4D data failed");
 
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_DRIVER_OUTPUT_CONTROL), TAG, "driver output cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8((uint8_t)(height_minus_one & 0xFF)), TAG, "driver output low failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8((uint8_t)(height_minus_one >> 8)), TAG, "driver output high failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "driver output scan failed");
+    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_G_CMD_PANEL_SETTING), TAG, "panel setting cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x0F), TAG, "panel setting data 1 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x29), TAG, "panel setting data 2 failed");
 
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_DATA_ENTRY_MODE), TAG, "data entry cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x03), TAG, "data entry data failed");
+    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_G_CMD_POWER_SETTING), TAG, "power setting cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x07), TAG, "power setting data 1 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "power setting data 2 failed");
 
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_BORDER_WAVEFORM), TAG, "border cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x05), TAG, "border data failed");
+    ESP_RETURN_ON_ERROR(epaper_write_command(0x03), TAG, "0x03 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x10), TAG, "0x03 data 1 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x54), TAG, "0x03 data 2 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x44), TAG, "0x03 data 3 failed");
 
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_GATE_DRIVING_VOLTAGE), TAG, "gate voltage cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x17), TAG, "gate voltage data failed");
+    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_G_CMD_BOOSTER_SOFT_START), TAG, "booster cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x0F), TAG, "booster data 1 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x0A), TAG, "booster data 2 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x2F), TAG, "booster data 3 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x25), TAG, "booster data 4 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x22), TAG, "booster data 5 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x2E), TAG, "booster data 6 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x21), TAG, "booster data 7 failed");
 
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_SOURCE_DRIVING_VOLTAGE), TAG, "source voltage cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x41), TAG, "source voltage data 1 failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "source voltage data 2 failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x32), TAG, "source voltage data 3 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_command(0x41), TAG, "0x41 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "0x41 data failed");
 
-    ESP_RETURN_ON_ERROR(epaper_set_memory_area(), TAG, "set memory area failed");
-    ESP_RETURN_ON_ERROR(epaper_power_on(), TAG, "power on failed");
+    ESP_RETURN_ON_ERROR(epaper_write_command(0x50), TAG, "0x50 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x37), TAG, "0x50 data failed");
+
+    ESP_RETURN_ON_ERROR(epaper_write_command(0x60), TAG, "0x60 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x02), TAG, "0x60 data 1 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x02), TAG, "0x60 data 2 failed");
+
+    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_G_CMD_RESOLUTION_SETTING), TAG, "resolution cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(EPAPER_2IN9_V2_WIDTH / 256), TAG, "width high failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(EPAPER_2IN9_V2_WIDTH % 256), TAG, "width low failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(EPAPER_2IN9_V2_HEIGHT / 256), TAG, "height high failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(EPAPER_2IN9_V2_HEIGHT % 256), TAG, "height low failed");
+
+    ESP_RETURN_ON_ERROR(epaper_write_command(0x65), TAG, "0x65 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "0x65 data 1 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "0x65 data 2 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "0x65 data 3 failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "0x65 data 4 failed");
+
+    ESP_RETURN_ON_ERROR(epaper_write_command(0xE7), TAG, "0xE7 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x1C), TAG, "0xE7 data failed");
+
+    ESP_RETURN_ON_ERROR(epaper_write_command(0xE3), TAG, "0xE3 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x22), TAG, "0xE3 data failed");
+
+    ESP_RETURN_ON_ERROR(epaper_write_command(0xB4), TAG, "0xB4 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0xD0), TAG, "0xB4 data failed");
+
+    ESP_RETURN_ON_ERROR(epaper_write_command(0xB5), TAG, "0xB5 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x03), TAG, "0xB5 data failed");
+
+    ESP_RETURN_ON_ERROR(epaper_write_command(0xE9), TAG, "0xE9 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x01), TAG, "0xE9 data failed");
+
+    ESP_RETURN_ON_ERROR(epaper_write_command(0x30), TAG, "0x30 cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x08), TAG, "0x30 data failed");
+
+    epaper_log_levels("power on before command");
+    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_G_CMD_POWER_ON), TAG, "power on cmd failed");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    epaper_log_levels("power on after command");
+    ESP_RETURN_ON_ERROR(epaper_wait_busy_high("power on"), TAG, "power on busy failed");
 
     ESP_LOGI(TAG, "e-paper initialized");
     return ESP_OK;
@@ -200,15 +263,25 @@ esp_err_t epaper_waveshare_2in9_v2_init_with_config(const epaper_waveshare_2in9_
     }
 
     s_config = *config;
+    ESP_LOGI(TAG, "pin config: MOSI=%d SCLK=%d CS=%d DC=%d RST=%d BUSY=%d PWR=%d SPI=%d Hz timeout=%d ms",
+             s_config.mosi_pin, s_config.sclk_pin, s_config.cs_pin,
+             s_config.dc_pin, s_config.rst_pin, s_config.busy_pin,
+             s_config.pwr_pin, s_config.spi_clock_hz, s_config.busy_timeout_ms);
+
+    uint64_t output_pin_mask = (1ULL << s_config.dc_pin) | (1ULL << s_config.rst_pin);
+    if (epaper_has_pwr_pin()) {
+        output_pin_mask |= (1ULL << s_config.pwr_pin);
+    }
 
     gpio_config_t output_conf = {
-        .pin_bit_mask = (1ULL << s_config.dc_pin) | (1ULL << s_config.rst_pin),
+        .pin_bit_mask = output_pin_mask,
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_RETURN_ON_ERROR(gpio_config(&output_conf), TAG, "output gpio config failed");
+    ESP_RETURN_ON_ERROR(epaper_set_pwr_level(1), TAG, "power gpio high failed");
 
     gpio_config_t busy_conf = {
         .pin_bit_mask = (1ULL << s_config.busy_pin),
@@ -282,11 +355,10 @@ esp_err_t epaper_waveshare_2in9_v2_display_frame(const uint8_t *framebuffer, siz
         return ESP_ERR_INVALID_ARG;
     }
 
-    ESP_LOGI(TAG, "displaying full frame (%u bytes)", (unsigned)framebuffer_len);
-    ESP_RETURN_ON_ERROR(epaper_set_memory_pointer(), TAG, "set memory pointer failed");
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_WRITE_RAM_BW), TAG, "write ram cmd failed");
+    ESP_LOGI(TAG, "displaying four-color frame (%u bytes)", (unsigned)framebuffer_len);
+    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_G_CMD_DATA_START_TRANSMISSION), TAG, "write ram cmd failed");
     ESP_RETURN_ON_ERROR(epaper_write_data(framebuffer, framebuffer_len), TAG, "write frame data failed");
-    ESP_RETURN_ON_ERROR(epaper_refresh(), TAG, "refresh failed");
+    ESP_RETURN_ON_ERROR(epaper_turn_on_display(), TAG, "refresh failed");
     ESP_LOGI(TAG, "frame displayed");
     return ESP_OK;
 }
@@ -298,13 +370,13 @@ esp_err_t epaper_waveshare_2in9_v2_sleep(void)
     }
 
     ESP_LOGI(TAG, "putting e-paper to sleep");
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_DISPLAY_UPDATE_CONTROL_2), TAG, "power off update cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x83), TAG, "power off update data failed");
-    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_CMD_MASTER_ACTIVATION), TAG, "power off activate failed");
-    ESP_RETURN_ON_ERROR(epaper_wait_busy("power off"), TAG, "power off busy failed");
-    ESP_RETURN_ON_ERROR(epaper_write_command(0x10), TAG, "deep sleep cmd failed");
-    ESP_RETURN_ON_ERROR(epaper_write_u8(0x01), TAG, "deep sleep data failed");
+    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_G_CMD_POWER_OFF), TAG, "power off cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0x00), TAG, "power off data failed");
+    ESP_RETURN_ON_ERROR(epaper_wait_busy_high("power off"), TAG, "power off busy failed");
+    ESP_RETURN_ON_ERROR(epaper_write_command(EPD_G_CMD_DEEP_SLEEP), TAG, "deep sleep cmd failed");
+    ESP_RETURN_ON_ERROR(epaper_write_u8(0xA5), TAG, "deep sleep data failed");
     vTaskDelay(pdMS_TO_TICKS(100));
+    ESP_RETURN_ON_ERROR(epaper_set_pwr_level(0), TAG, "power low failed");
     return ESP_OK;
 }
 
@@ -313,8 +385,19 @@ esp_err_t epaper_waveshare_2in9_v2_test_pattern(void)
     static uint8_t test_frame[EPAPER_2IN9_V2_FB_BYTES];
 
     for (size_t i = 0; i < sizeof(test_frame); i++) {
-        test_frame[i] = (i % 2 == 0) ? 0xAA : 0x55;
+        size_t pixel = i * 4;
+        size_t row = pixel / EPAPER_2IN9_V2_WIDTH;
+        uint8_t color = EPD_G_COLOR_WHITE;
+        if (row < EPAPER_2IN9_V2_HEIGHT / 4) {
+            color = EPD_G_COLOR_BLACK;
+        } else if (row < EPAPER_2IN9_V2_HEIGHT / 2) {
+            color = EPD_G_COLOR_RED;
+        } else if (row < (EPAPER_2IN9_V2_HEIGHT * 3) / 4) {
+            color = EPD_G_COLOR_YELLOW;
+        }
+        test_frame[i] = (uint8_t)((color << 6) | (color << 4) | (color << 2) | color);
     }
 
+    ESP_LOGI(TAG, "displaying diagnostic black/red/yellow/white test pattern");
     return epaper_waveshare_2in9_v2_display_frame(test_frame, sizeof(test_frame));
 }

@@ -1,0 +1,4 @@
+get_idf
+idf.py set-target esp32s3
+idf.py build
+idf.py -p /dev/cu.usbmodem21201 flash monitor

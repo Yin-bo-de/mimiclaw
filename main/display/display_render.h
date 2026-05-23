@@ -10,9 +10,14 @@
 extern "C" {
 #endif
 
-#define DISPLAY_RENDER_WIDTH      MIMI_DISPLAY_WIDTH
-#define DISPLAY_RENDER_HEIGHT     MIMI_DISPLAY_HEIGHT
+/* Logical (rotated 90°) drawing dimensions — dashboard renders in landscape */
+#define DISPLAY_RENDER_WIDTH      MIMI_DISPLAY_ROTATED_WIDTH
+#define DISPLAY_RENDER_HEIGHT     MIMI_DISPLAY_ROTATED_HEIGHT
+/* Physical framebuffer size (portrait 128×296 at 2bpp) */
 #define DISPLAY_RENDER_FB_BYTES   MIMI_DISPLAY_FB_BYTES
+/* Physical resolution for framebuffer address calculation */
+#define DISPLAY_RENDER_PHYS_W     MIMI_DISPLAY_WIDTH
+#define DISPLAY_RENDER_PHYS_H     MIMI_DISPLAY_HEIGHT
 
 typedef struct {
     const char *date;

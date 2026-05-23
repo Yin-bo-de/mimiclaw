@@ -120,21 +120,29 @@
 /* GPIO */
 #define MIMI_GPIO_CONFIG_SECTION     1   /* enable GPIO tools */
 
-/* Display / Waveshare 2.9" V2 e-paper */
+/* Display / Waveshare 2.9" G four-color e-paper */
+/* Physical resolution is 128×296 (portrait); rotated for landscape 296×128 */
 #define MIMI_DISPLAY_ENABLED         1
-#define MIMI_DISPLAY_WIDTH           296
-#define MIMI_DISPLAY_HEIGHT          128
-#define MIMI_DISPLAY_FB_BYTES        ((MIMI_DISPLAY_WIDTH * MIMI_DISPLAY_HEIGHT) / 8)
+#define MIMI_DISPLAY_WIDTH           128
+#define MIMI_DISPLAY_HEIGHT          296
+#define MIMI_DISPLAY_FB_BYTES        ((MIMI_DISPLAY_WIDTH * MIMI_DISPLAY_HEIGHT) / 4)
+#define MIMI_DISPLAY_ROTATED_WIDTH   296
+#define MIMI_DISPLAY_ROTATED_HEIGHT  128
 #define MIMI_DISPLAY_SPI_HOST        SPI2_HOST
 #define MIMI_DISPLAY_PIN_MOSI        11
 #define MIMI_DISPLAY_PIN_SCLK        12
-#define MIMI_DISPLAY_PIN_CS          13
-#define MIMI_DISPLAY_PIN_DC          14
-#define MIMI_DISPLAY_PIN_RST         15
-#define MIMI_DISPLAY_PIN_BUSY        16
-#define MIMI_DISPLAY_SPI_CLOCK_HZ    (4 * 1000 * 1000)
+#define MIMI_DISPLAY_PIN_CS          10
+#define MIMI_DISPLAY_PIN_DC          13
+#define MIMI_DISPLAY_PIN_RST         14
+#define MIMI_DISPLAY_PIN_BUSY        4
+#define MIMI_DISPLAY_PIN_PWR         -1
+#define MIMI_DISPLAY_SPI_CLOCK_HZ    (2 * 1000 * 1000)
 #define MIMI_DISPLAY_REFRESH_MS      (5 * 60 * 1000)
 #define MIMI_DISPLAY_BUSY_TIMEOUT_MS (30 * 1000)
+#define MIMI_DISPLAY_RESET_HIGH_MS   200
+#define MIMI_DISPLAY_RESET_LOW_MS    2
+#define MIMI_DISPLAY_RESET_RELEASE_MS 200
+#define MIMI_DISPLAY_DIAGNOSTIC_BOOT_PATTERN 1
 #define MIMI_DISPLAY_TASK_STACK      (4 * 1024)
 #define MIMI_DISPLAY_TASK_PRIO       3
 #define MIMI_DISPLAY_TASK_CORE       1

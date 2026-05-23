@@ -14,6 +14,8 @@
 #define HEADER_TEXT_WIDTH (DISPLAY_RENDER_WIDTH - 12)
 #define WEATHER_TEXT_WIDTH (158 - WEATHER_TEXT_X - 4)
 #define TODO_TEXT_WIDTH (DISPLAY_RENDER_WIDTH - TODO_TEXT_X - 6)
+#define DISPLAY_COLOR_BLACK 0x00
+#define DISPLAY_COLOR_WHITE 0x01
 
 static const uint8_t FONT_DIGITS[10][FONT_WIDTH] = {
     {0x3E, 0x51, 0x49, 0x45, 0x3E},
@@ -216,7 +218,7 @@ void display_render_clear(uint8_t *framebuffer, size_t framebuffer_len, bool whi
         return;
     }
 
-    memset(framebuffer, white ? 0xFF : 0x00, DISPLAY_RENDER_FB_BYTES);
+    memset(framebuffer, white ? 0x55 : 0x00, DISPLAY_RENDER_FB_BYTES);
 }
 
 void display_render_draw_pixel(uint8_t *framebuffer, size_t framebuffer_len, int x, int y, bool black)
@@ -228,14 +230,18 @@ void display_render_draw_pixel(uint8_t *framebuffer, size_t framebuffer_len, int
         return;
     }
 
-    size_t index = (size_t)y * (DISPLAY_RENDER_WIDTH / 8) + (size_t)(x / 8);
-    uint8_t mask = (uint8_t)(0x80 >> (x % 8));
+    /* Apply 90° rotation: logical landscape (296×128) → physical portrait (128×296).
+     * Logical (x, y) maps to physical X = 127 - y, physical Y = x.
+     * This matches the Waveshare Paint_NewImage(buf, 128, 296, 90, WHITE) convention. */
+    int phys_x = DISPLAY_RENDER_PHYS_W - 1 - y;
+    int phys_y = x;
 
-    if (black) {
-        framebuffer[index] &= (uint8_t)~mask;
-    } else {
-        framebuffer[index] |= mask;
-    }
+    size_t index = ((size_t)phys_y * DISPLAY_RENDER_PHYS_W + (size_t)phys_x) / 4;
+    int shift = 6 - ((phys_x % 4) * 2);
+    uint8_t color = black ? DISPLAY_COLOR_BLACK : DISPLAY_COLOR_WHITE;
+
+    framebuffer[index] &= (uint8_t)~(0x03 << shift);
+    framebuffer[index] |= (uint8_t)(color << shift);
 }
 
 void display_render_draw_hline(uint8_t *framebuffer, size_t framebuffer_len, int x, int y, int width, bool black)
