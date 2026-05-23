@@ -55,10 +55,59 @@ static void keeps_ascii_text(void)
     assert(valid_utf8(text));
 }
 
+static void copy_truncates_ascii_and_terminates(void)
+{
+    char dest[6];
+
+    mimi_copy_string_truncated_utf8(dest, sizeof(dest), "weather");
+
+    assert(strcmp(dest, "weath") == 0);
+    assert(valid_utf8(dest));
+}
+
+static void copy_preserves_complete_utf8(void)
+{
+    char dest[16];
+
+    mimi_copy_string_truncated_utf8(dest, sizeof(dest), "天气晴");
+
+    assert(strcmp(dest, "天气晴") == 0);
+    assert(valid_utf8(dest));
+}
+
+static void copy_trims_partial_utf8_tail(void)
+{
+    char dest[9];
+
+    mimi_copy_string_truncated_utf8(dest, sizeof(dest), "天气晴朗");
+
+    assert(strcmp(dest, "天气") == 0);
+    assert(valid_utf8(dest));
+}
+
+static void copy_null_source_writes_empty_string(void)
+{
+    char dest[8] = "old";
+
+    mimi_copy_string_truncated_utf8(dest, sizeof(dest), NULL);
+
+    assert(strcmp(dest, "") == 0);
+}
+
+static void copy_zero_size_destination_is_safe(void)
+{
+    mimi_copy_string_truncated_utf8(NULL, 0, "天气");
+}
+
 int main(void)
 {
     trims_partial_three_byte_character();
     keeps_complete_utf8_character();
     keeps_ascii_text();
+    copy_truncates_ascii_and_terminates();
+    copy_preserves_complete_utf8();
+    copy_trims_partial_utf8_tail();
+    copy_null_source_writes_empty_string();
+    copy_zero_size_destination_is_safe();
     return 0;
 }

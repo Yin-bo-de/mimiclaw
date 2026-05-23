@@ -4,6 +4,7 @@
 #include "display/epaper_waveshare_2in9_v2.h"
 #include "tools/tool_get_time.h"
 #include "tools/tool_web_search.h"
+#include "util/utf8.h"
 
 #include "cJSON.h"
 #include "esp_log.h"
@@ -42,18 +43,6 @@ static bool s_driver_attempted;
 static uint32_t s_dirty_regions;
 static uint8_t s_framebuffer[MIMI_DISPLAY_FB_BYTES];
 
-static void copy_string_truncated(char *dest, size_t dest_size, const char *src)
-{
-    if (!dest || dest_size == 0) {
-        return;
-    }
-    if (!src) {
-        dest[0] = '\0';
-        return;
-    }
-    snprintf(dest, dest_size, "%s", src);
-}
-
 static int64_t current_epoch_or_zero(void)
 {
     time_t now = time(NULL);
@@ -81,6 +70,7 @@ static void copy_line_summary(const char *line, size_t len, char *summary, size_
     }
     memcpy(summary, line, len);
     summary[len] = '\0';
+    mimi_trim_incomplete_utf8_tail(summary);
 }
 
 static void extract_search_summary(const char *search_output, char *summary, size_t summary_size)
@@ -249,8 +239,8 @@ static esp_err_t load_state_locked(void)
     cJSON *weather_epoch = cJSON_GetObjectItem(root, "weather_updated_epoch");
     cJSON *todos_epoch = cJSON_GetObjectItem(root, "todos_updated_epoch");
 
-    copy_string_truncated(s_state.weather_city, sizeof(s_state.weather_city), weather_city);
-    copy_string_truncated(s_state.weather_summary, sizeof(s_state.weather_summary), weather_summary);
+    mimi_copy_string_truncated_utf8(s_state.weather_city, sizeof(s_state.weather_city), weather_city);
+    mimi_copy_string_truncated_utf8(s_state.weather_summary, sizeof(s_state.weather_summary), weather_summary);
     s_state.weather_updated_epoch = cJSON_IsNumber(weather_epoch) ? (int64_t)weather_epoch->valuedouble : 0;
     s_state.todos_updated_epoch = cJSON_IsNumber(todos_epoch) ? (int64_t)todos_epoch->valuedouble : 0;
     s_state.todo_count = 0;
@@ -266,7 +256,7 @@ static esp_err_t load_state_locked(void)
             if (!todo) {
                 continue;
             }
-            copy_string_truncated(s_state.todos[s_state.todo_count], MIMI_DISPLAY_TODO_LEN, todo);
+            mimi_copy_string_truncated_utf8(s_state.todos[s_state.todo_count], MIMI_DISPLAY_TODO_LEN, todo);
             s_state.todo_count++;
         }
     }
@@ -598,7 +588,7 @@ esp_err_t display_service_set_weather_city(const char *city)
     if (err != ESP_OK) {
         return err;
     }
-    copy_string_truncated(s_state.weather_city, sizeof(s_state.weather_city), city);
+    mimi_copy_string_truncated_utf8(s_state.weather_city, sizeof(s_state.weather_city), city);
     s_state.weather_summary[0] = '\0';
     s_state.weather_updated_epoch = current_epoch_or_zero();
     err = save_state_locked();
@@ -619,9 +609,9 @@ esp_err_t display_service_set_weather(const char *city, const char *summary, int
         return err;
     }
     if (city && city[0] != '\0') {
-        copy_string_truncated(s_state.weather_city, sizeof(s_state.weather_city), city);
+        mimi_copy_string_truncated_utf8(s_state.weather_city, sizeof(s_state.weather_city), city);
     }
-    copy_string_truncated(s_state.weather_summary, sizeof(s_state.weather_summary), summary);
+    mimi_copy_string_truncated_utf8(s_state.weather_summary, sizeof(s_state.weather_summary), summary);
     s_state.weather_updated_epoch = updated_epoch > 0 ? updated_epoch : current_epoch_or_zero();
     err = save_state_locked();
     unlock_state();
@@ -647,7 +637,7 @@ esp_err_t display_service_set_todos(const char *const *todos, size_t todo_count,
         if (!todos[i] || todos[i][0] == '\0') {
             continue;
         }
-        copy_string_truncated(s_state.todos[s_state.todo_count], MIMI_DISPLAY_TODO_LEN, todos[i]);
+        mimi_copy_string_truncated_utf8(s_state.todos[s_state.todo_count], MIMI_DISPLAY_TODO_LEN, todos[i]);
         s_state.todo_count++;
     }
     s_state.todos_updated_epoch = updated_epoch > 0 ? updated_epoch : current_epoch_or_zero();

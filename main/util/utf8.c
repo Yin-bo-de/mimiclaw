@@ -1,7 +1,21 @@
 #include "util/utf8.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
+
+void mimi_copy_string_truncated_utf8(char *dest, size_t dest_size, const char *src)
+{
+    if (!dest || dest_size == 0) {
+        return;
+    }
+    if (!src) {
+        dest[0] = '\0';
+        return;
+    }
+    snprintf(dest, dest_size, "%s", src);
+    mimi_trim_incomplete_utf8_tail(dest);
+}
 
 void mimi_trim_incomplete_utf8_tail(char *text)
 {
