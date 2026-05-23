@@ -26,6 +26,10 @@ cJSON *llm_convert_messages_openai(const char *system_prompt, cJSON *messages)
             cJSON *m = cJSON_CreateObject();
             cJSON_AddStringToObject(m, "role", role->valuestring);
             cJSON_AddStringToObject(m, "content", content->valuestring);
+            cJSON *reasoning = cJSON_GetObjectItem(msg, "reasoning_content");
+            if (strcmp(role->valuestring, "assistant") == 0 && reasoning && cJSON_IsString(reasoning)) {
+                cJSON_AddStringToObject(m, "reasoning_content", reasoning->valuestring);
+            }
             cJSON_AddItemToArray(out, m);
             continue;
         }

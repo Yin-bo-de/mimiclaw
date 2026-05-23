@@ -29,6 +29,7 @@ idf_component_register(
         "onboard/wifi_onboard.c"
         "display/epaper_waveshare_2in9_v2.c"
         "display/display_render.c"
+        "display/display_font_zh12.c"
         "display/display_service.c"
     INCLUDE_DIRS
         "."

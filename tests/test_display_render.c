@@ -41,8 +41,59 @@ static void chinese_weather_uses_real_glyphs_not_unknown_boxes(void)
     assert(framebuffer_region_has_black_pixel(chinese_framebuffer, 0, 0, 24, 12));
 }
 
+static void chinese_text_advances_by_12px_glyphs(void)
+{
+    uint8_t framebuffer[DISPLAY_RENDER_FB_BYTES];
+
+    display_render_clear(framebuffer, sizeof(framebuffer), true);
+
+    int cursor_x = display_render_draw_text(framebuffer, sizeof(framebuffer), 0, 0, "多云", true);
+
+    assert(cursor_x == 26);
+}
+
+static void mixed_ascii_and_chinese_render_together(void)
+{
+    uint8_t framebuffer[DISPLAY_RENDER_FB_BYTES];
+
+    display_render_clear(framebuffer, sizeof(framebuffer), true);
+
+    int cursor_x = display_render_draw_text(framebuffer, sizeof(framebuffer), 0, 0, "北京 25C", true);
+
+    assert(cursor_x > 0);
+    assert(framebuffer_region_has_black_pixel(framebuffer, 0, 0, 24, 12));
+    assert(framebuffer_region_has_black_pixel(framebuffer, 26, 0, 40, 12));
+}
+
+static void invalid_utf8_still_renders_one_unknown_box_per_byte(void)
+{
+    uint8_t framebuffer[DISPLAY_RENDER_FB_BYTES];
+
+    display_render_clear(framebuffer, sizeof(framebuffer), true);
+
+    int cursor_x = display_render_draw_text(framebuffer, sizeof(framebuffer), 0, 0, "\x80\x80", true);
+
+    assert(cursor_x == 12);
+}
+
+static void unsupported_valid_unicode_uses_wide_placeholder(void)
+{
+    uint8_t framebuffer[DISPLAY_RENDER_FB_BYTES];
+
+    display_render_clear(framebuffer, sizeof(framebuffer), true);
+
+    int cursor_x = display_render_draw_text(framebuffer, sizeof(framebuffer), 0, 0, "龘", true);
+
+    assert(cursor_x == 13);
+    assert(framebuffer_region_has_black_pixel(framebuffer, 0, 0, 12, 12));
+}
+
 int main(void)
 {
     chinese_weather_uses_real_glyphs_not_unknown_boxes();
+    chinese_text_advances_by_12px_glyphs();
+    mixed_ascii_and_chinese_render_together();
+    invalid_utf8_still_renders_one_unknown_box_per_byte();
+    unsupported_valid_unicode_uses_wide_placeholder();
     return 0;
 }

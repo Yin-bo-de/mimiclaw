@@ -1,13 +1,17 @@
 #include "display/display_render.h"
+#include "display/display_font_zh12.h"
 
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
-#define FONT_WIDTH 5
-#define FONT_HEIGHT 7
-#define FONT_SPACING 1
-#define LINE_HEIGHT 10
+#define ASCII_FONT_WIDTH 5
+#define ASCII_FONT_HEIGHT 7
+#define ASCII_FONT_SPACING 1
+#define ZH_FONT_WIDTH DISPLAY_ZH12_WIDTH
+#define ZH_FONT_HEIGHT DISPLAY_ZH12_HEIGHT
+#define ZH_FONT_SPACING 1
+#define LINE_HEIGHT 14
 #define HEADER_TEXT_X 6
 #define WEATHER_TEXT_X 8
 #define TODO_TEXT_X 166
@@ -17,7 +21,7 @@
 #define DISPLAY_COLOR_BLACK 0x00
 #define DISPLAY_COLOR_WHITE 0x01
 
-static const uint8_t FONT_DIGITS[10][FONT_WIDTH] = {
+static const uint8_t FONT_DIGITS[10][ASCII_FONT_WIDTH] = {
     {0x3E, 0x51, 0x49, 0x45, 0x3E},
     {0x00, 0x42, 0x7F, 0x40, 0x00},
     {0x42, 0x61, 0x51, 0x49, 0x46},
@@ -30,7 +34,7 @@ static const uint8_t FONT_DIGITS[10][FONT_WIDTH] = {
     {0x06, 0x49, 0x49, 0x29, 0x1E},
 };
 
-static const uint8_t FONT_LETTERS[26][FONT_WIDTH] = {
+static const uint8_t FONT_LETTERS[26][ASCII_FONT_WIDTH] = {
     {0x7E, 0x11, 0x11, 0x11, 0x7E},
     {0x7F, 0x49, 0x49, 0x49, 0x36},
     {0x3E, 0x41, 0x41, 0x41, 0x22},
@@ -59,18 +63,18 @@ static const uint8_t FONT_LETTERS[26][FONT_WIDTH] = {
     {0x61, 0x51, 0x49, 0x45, 0x43},
 };
 
-static void glyph_for_char(char c, uint8_t glyph[FONT_WIDTH])
+static void glyph_for_char(char c, uint8_t glyph[ASCII_FONT_WIDTH])
 {
-    memset(glyph, 0, FONT_WIDTH);
+    memset(glyph, 0, ASCII_FONT_WIDTH);
 
     if (c >= '0' && c <= '9') {
-        memcpy(glyph, FONT_DIGITS[c - '0'], FONT_WIDTH);
+        memcpy(glyph, FONT_DIGITS[c - '0'], ASCII_FONT_WIDTH);
         return;
     }
 
     c = (char)toupper((unsigned char)c);
     if (c >= 'A' && c <= 'Z') {
-        memcpy(glyph, FONT_LETTERS[c - 'A'], FONT_WIDTH);
+        memcpy(glyph, FONT_LETTERS[c - 'A'], ASCII_FONT_WIDTH);
         return;
     }
 
@@ -149,65 +153,169 @@ static const char *value_or_empty(const char *value)
     return (value && value[0] != '\0') ? value : "";
 }
 
-static size_t max_chars_for_width(int pixel_width)
+typedef struct {
+    uint32_t codepoint;
+    size_t advance;
+    bool valid;
+} decoded_codepoint_t;
+
+static bool is_utf8_continuation(unsigned char byte)
 {
-    if (pixel_width < FONT_WIDTH) {
-        return 0;
+    return (byte & 0xC0) == 0x80;
+}
+
+static decoded_codepoint_t decode_utf8_codepoint(const char *text)
+{
+    const unsigned char *bytes = (const unsigned char *)text;
+
+    if (bytes[0] <= 0x7F) {
+        return (decoded_codepoint_t){.codepoint = bytes[0], .advance = 1, .valid = true};
     }
-    return (size_t)((pixel_width + FONT_SPACING) / (FONT_WIDTH + FONT_SPACING));
+
+    if ((bytes[0] & 0xE0) == 0xC0) {
+        if (!is_utf8_continuation(bytes[1])) {
+            return (decoded_codepoint_t){.codepoint = bytes[0], .advance = 1, .valid = false};
+        }
+        uint32_t codepoint = ((uint32_t)(bytes[0] & 0x1F) << 6) | (uint32_t)(bytes[1] & 0x3F);
+        if (codepoint < 0x80) {
+            return (decoded_codepoint_t){.codepoint = bytes[0], .advance = 1, .valid = false};
+        }
+        return (decoded_codepoint_t){.codepoint = codepoint, .advance = 2, .valid = true};
+    }
+
+    if ((bytes[0] & 0xF0) == 0xE0) {
+        if (!is_utf8_continuation(bytes[1]) || !is_utf8_continuation(bytes[2])) {
+            return (decoded_codepoint_t){.codepoint = bytes[0], .advance = 1, .valid = false};
+        }
+        uint32_t codepoint = ((uint32_t)(bytes[0] & 0x0F) << 12) |
+                             ((uint32_t)(bytes[1] & 0x3F) << 6) |
+                             (uint32_t)(bytes[2] & 0x3F);
+        if (codepoint < 0x800 || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+            return (decoded_codepoint_t){.codepoint = bytes[0], .advance = 1, .valid = false};
+        }
+        return (decoded_codepoint_t){.codepoint = codepoint, .advance = 3, .valid = true};
+    }
+
+    if ((bytes[0] & 0xF8) == 0xF0) {
+        if (!is_utf8_continuation(bytes[1]) || !is_utf8_continuation(bytes[2]) || !is_utf8_continuation(bytes[3])) {
+            return (decoded_codepoint_t){.codepoint = bytes[0], .advance = 1, .valid = false};
+        }
+        uint32_t codepoint = ((uint32_t)(bytes[0] & 0x07) << 18) |
+                             ((uint32_t)(bytes[1] & 0x3F) << 12) |
+                             ((uint32_t)(bytes[2] & 0x3F) << 6) |
+                             (uint32_t)(bytes[3] & 0x3F);
+        if (codepoint < 0x10000 || codepoint > 0x10FFFF) {
+            return (decoded_codepoint_t){.codepoint = bytes[0], .advance = 1, .valid = false};
+        }
+        return (decoded_codepoint_t){.codepoint = codepoint, .advance = 4, .valid = true};
+    }
+
+    return (decoded_codepoint_t){.codepoint = bytes[0], .advance = 1, .valid = false};
+}
+
+static int decoded_render_width(decoded_codepoint_t decoded)
+{
+    if (!decoded.valid || decoded.codepoint <= 0x7F) {
+        return ASCII_FONT_WIDTH;
+    }
+    return ZH_FONT_WIDTH;
+}
+
+static int decoded_advance_width(decoded_codepoint_t decoded)
+{
+    if (!decoded.valid || decoded.codepoint <= 0x7F) {
+        return ASCII_FONT_WIDTH + ASCII_FONT_SPACING;
+    }
+    return ZH_FONT_WIDTH + ZH_FONT_SPACING;
+}
+
+static int text_advance_width(const char *text)
+{
+    const char *value = value_or_empty(text);
+    int width = 0;
+
+    for (const char *cursor = value; *cursor != '\0';) {
+        decoded_codepoint_t decoded = decode_utf8_codepoint(cursor);
+        width += decoded_advance_width(decoded);
+        cursor += decoded.advance;
+    }
+
+    return width;
 }
 
 static void truncate_text_for_width(const char *input, char *output, size_t output_size, int pixel_width)
 {
     const char *value = value_or_empty(input);
-    size_t max_chars = max_chars_for_width(pixel_width);
-    size_t input_len = strlen(value);
 
     if (output_size == 0) {
         return;
     }
     output[0] = '\0';
 
-    if (max_chars == 0) {
-        return;
-    }
-    if (max_chars >= output_size) {
-        max_chars = output_size - 1;
-    }
-    if (input_len <= max_chars) {
-        snprintf(output, output_size, "%s", value);
-        return;
-    }
-    if (max_chars <= 3) {
-        memset(output, '.', max_chars);
-        output[max_chars] = '\0';
+    if (pixel_width < ASCII_FONT_WIDTH) {
         return;
     }
 
-    size_t keep = max_chars - 3;
-    memcpy(output, value, keep);
-    memcpy(output + keep, "...", 3);
-    output[keep + 3] = '\0';
+    const int ellipsis_width = 3 * (ASCII_FONT_WIDTH + ASCII_FONT_SPACING);
+    size_t out_len = 0;
+    int width = 0;
+    const char *cursor = value;
+    bool truncated = false;
+
+    while (*cursor != '\0') {
+        decoded_codepoint_t decoded = decode_utf8_codepoint(cursor);
+        int advance_width = decoded_advance_width(decoded);
+        int render_width = decoded_render_width(decoded);
+        bool has_more = cursor[decoded.advance] != '\0';
+        int reserved_width = has_more ? ellipsis_width : 0;
+
+        if (width + render_width + reserved_width > pixel_width || out_len + decoded.advance >= output_size) {
+            truncated = true;
+            break;
+        }
+
+        memcpy(output + out_len, cursor, decoded.advance);
+        out_len += decoded.advance;
+        width += advance_width;
+        cursor += decoded.advance;
+    }
+
+    output[out_len] = '\0';
+
+    if (truncated && output_size > out_len + 1) {
+        while (out_len > 0 && width + ellipsis_width > pixel_width) {
+            unsigned char byte = (unsigned char)output[out_len - 1];
+            out_len--;
+            if ((byte & 0xC0) != 0x80) {
+                width -= ASCII_FONT_WIDTH + ASCII_FONT_SPACING;
+            }
+        }
+        size_t remaining = output_size - out_len;
+        if (remaining >= 4) {
+            memcpy(output + out_len, "...", 4);
+        } else {
+            output[out_len] = '\0';
+        }
+    }
 }
 
 static void format_truncated_line(char *output, size_t output_size, const char *label, const char *value, int pixel_width)
 {
     const char *safe_label = value_or_empty(label);
-    size_t label_len = strlen(safe_label);
-    size_t max_chars = max_chars_for_width(pixel_width);
+    int label_width = text_advance_width(safe_label);
 
     if (output_size == 0) {
         return;
     }
     output[0] = '\0';
 
-    if (label_len >= max_chars) {
+    if (label_width >= pixel_width) {
         truncate_text_for_width(safe_label, output, output_size, pixel_width);
         return;
     }
 
     char truncated_value[64];
-    int value_width = pixel_width - (int)(label_len * (FONT_WIDTH + FONT_SPACING));
+    int value_width = pixel_width - label_width;
     truncate_text_for_width(value, truncated_value, sizeof(truncated_value), value_width);
     snprintf(output, output_size, "%s%s", safe_label, truncated_value);
 }
@@ -278,6 +386,37 @@ void display_render_draw_rect(uint8_t *framebuffer, size_t framebuffer_len, int 
     display_render_draw_vline(framebuffer, framebuffer_len, x + width - 1, y, height, black);
 }
 
+static void draw_ascii_glyph(uint8_t *framebuffer, size_t framebuffer_len, int x, int y,
+                             const uint8_t glyph[ASCII_FONT_WIDTH], bool black)
+{
+    for (int col = 0; col < ASCII_FONT_WIDTH; col++) {
+        for (int row = 0; row < ASCII_FONT_HEIGHT; row++) {
+            if ((glyph[col] & (1 << row)) != 0) {
+                display_render_draw_pixel(framebuffer, framebuffer_len, x + col, y + row, black);
+            }
+        }
+    }
+}
+
+static void draw_zh12_glyph(uint8_t *framebuffer, size_t framebuffer_len, int x, int y,
+                            const display_zh12_glyph_t *glyph, bool black)
+{
+    for (int row = 0; row < ZH_FONT_HEIGHT; row++) {
+        uint16_t row_bits = ((uint16_t)glyph->bitmap[row * 2] << 8) | glyph->bitmap[row * 2 + 1];
+        for (int col = 0; col < ZH_FONT_WIDTH; col++) {
+            if ((row_bits & (uint16_t)(0x8000 >> col)) != 0) {
+                display_render_draw_pixel(framebuffer, framebuffer_len, x + col, y + row, black);
+            }
+        }
+    }
+}
+
+static void draw_unknown_zh_box(uint8_t *framebuffer, size_t framebuffer_len, int x, int y, bool black)
+{
+    display_render_draw_rect(framebuffer, framebuffer_len, x, y, ZH_FONT_WIDTH, ZH_FONT_HEIGHT, black);
+    display_render_draw_hline(framebuffer, framebuffer_len, x + 2, y + ZH_FONT_HEIGHT / 2, ZH_FONT_WIDTH - 4, black);
+}
+
 int display_render_draw_text(uint8_t *framebuffer, size_t framebuffer_len, int x, int y, const char *text, bool black)
 {
     if (!text || !framebuffer_is_valid(framebuffer, framebuffer_len)) {
@@ -285,22 +424,34 @@ int display_render_draw_text(uint8_t *framebuffer, size_t framebuffer_len, int x
     }
 
     int cursor_x = x;
-    for (const char *cursor = text; *cursor != '\0'; cursor++) {
-        if (cursor_x > DISPLAY_RENDER_WIDTH - FONT_WIDTH) {
+    const char *cursor = text;
+    while (*cursor != '\0') {
+        decoded_codepoint_t decoded = decode_utf8_codepoint(cursor);
+
+        if (!decoded.valid || decoded.codepoint <= 0x7F) {
+            if (cursor_x > DISPLAY_RENDER_WIDTH - ASCII_FONT_WIDTH) {
+                break;
+            }
+            uint8_t glyph[ASCII_FONT_WIDTH];
+            glyph_for_char((char)decoded.codepoint, glyph);
+            draw_ascii_glyph(framebuffer, framebuffer_len, cursor_x, y, glyph, black);
+            cursor_x += ASCII_FONT_WIDTH + ASCII_FONT_SPACING;
+            cursor += decoded.advance;
+            continue;
+        }
+
+        if (cursor_x > DISPLAY_RENDER_WIDTH - ZH_FONT_WIDTH) {
             break;
         }
 
-        uint8_t glyph[FONT_WIDTH];
-        glyph_for_char(*cursor, glyph);
-
-        for (int col = 0; col < FONT_WIDTH; col++) {
-            for (int row = 0; row < FONT_HEIGHT; row++) {
-                if ((glyph[col] & (1 << row)) != 0) {
-                    display_render_draw_pixel(framebuffer, framebuffer_len, cursor_x + col, y + row, black);
-                }
-            }
+        const display_zh12_glyph_t *glyph = display_font_zh12_find(decoded.codepoint);
+        if (glyph) {
+            draw_zh12_glyph(framebuffer, framebuffer_len, cursor_x, y, glyph, black);
+        } else {
+            draw_unknown_zh_box(framebuffer, framebuffer_len, cursor_x, y, black);
         }
-        cursor_x += FONT_WIDTH + FONT_SPACING;
+        cursor_x += ZH_FONT_WIDTH + ZH_FONT_SPACING;
+        cursor += decoded.advance;
     }
 
     return cursor_x;
@@ -342,7 +493,7 @@ void display_render_dashboard(uint8_t *framebuffer, size_t framebuffer_len, cons
     draw_text_line(framebuffer, framebuffer_len, WEATHER_TEXT_X, 31, WEATHER_TEXT_WIDTH,
                    "Weather: ", has_weather ? data->weather_city : "set city in chat");
     if (has_weather && data->weather_summary && data->weather_summary[0] != '\0') {
-        draw_text_line(framebuffer, framebuffer_len, WEATHER_TEXT_X, 43, WEATHER_TEXT_WIDTH,
+        draw_text_line(framebuffer, framebuffer_len, WEATHER_TEXT_X, 31 + LINE_HEIGHT, WEATHER_TEXT_WIDTH,
                        "", data->weather_summary);
     }
 
