@@ -21,6 +21,7 @@ typedef struct {
     int dc_pin;
     int rst_pin;
     int busy_pin;
+    int pwr_pin;
     int spi_clock_hz;
     int busy_timeout_ms;
 } epaper_waveshare_2in9_v2_config_t;

@@ -5,6 +5,7 @@
 #include "llm/llm_proxy.h"
 #include "memory/session_mgr.h"
 #include "tools/tool_registry.h"
+#include "util/utf8.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -154,6 +155,7 @@ static cJSON *build_tool_results(const llm_response_t *resp, const mimi_msg_t *m
         tool_output[0] = '\0';
         tool_registry_execute(call->name, tool_input, tool_output, tool_output_size);
         free(patched_input);
+        mimi_trim_incomplete_utf8_tail(tool_output);
 
         ESP_LOGI(TAG, "Tool %s result: %d bytes", call->name, (int)strlen(tool_output));
 
@@ -256,6 +258,9 @@ static void agent_loop_task(void *arg)
             /* Append assistant message with content array */
             cJSON *asst_msg = cJSON_CreateObject();
             cJSON_AddStringToObject(asst_msg, "role", "assistant");
+            if (resp.reasoning_content && resp.reasoning_content[0]) {
+                cJSON_AddStringToObject(asst_msg, "reasoning_content", resp.reasoning_content);
+            }
             cJSON_AddItemToObject(asst_msg, "content", build_assistant_content(&resp));
             cJSON_AddItemToArray(messages, asst_msg);
 
