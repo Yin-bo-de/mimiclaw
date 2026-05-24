@@ -12,6 +12,7 @@ cc -Wall -Wextra -Werror -I main -I "$IDF_PATH/components/json/cJSON" \
 /tmp/mimiclaw_test_llm_openai_conversion
 
 cc -Wall -Wextra -Werror -I main \
-    tests/test_display_render.c main/display/display_render.c main/display/display_font_zh12.c \
-    -o /tmp/mimiclaw_test_display_render
-/tmp/mimiclaw_test_display_render
+    tests/test_display_lvgl_pack.c main/display/display_lvgl_pack.c \
+    -o /tmp/mimiclaw_test_display_lvgl_pack
+/tmp/mimiclaw_test_display_lvgl_pack
+

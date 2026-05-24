@@ -1,6 +1,6 @@
 #include "display/display_service.h"
 
-#include "display/display_render.h"
+#include "display/display_lvgl.h"
 #include "display/epaper_waveshare_2in9_v2.h"
 #include "tools/tool_get_time.h"
 #include "tools/tool_web_search.h"
@@ -139,16 +139,6 @@ static uint32_t take_dirty_regions(void)
         unlock_state();
     }
     return regions;
-}
-
-static epaper_waveshare_2in9_v2_rect_t full_physical_rect(void)
-{
-    return (epaper_waveshare_2in9_v2_rect_t){
-        .x = 0,
-        .y = 0,
-        .width = EPAPER_2IN9_V2_WIDTH,
-        .height = EPAPER_2IN9_V2_HEIGHT,
-    };
 }
 
 static esp_err_t save_state_locked(void)
@@ -340,22 +330,12 @@ static esp_err_t render_dashboard_regions(uint32_t dirty_regions)
         return err;
     }
 
-    if ((dirty_regions & DISPLAY_DIRTY_FULL) != 0) {
-        display_render_dashboard(s_framebuffer, sizeof(s_framebuffer), &data);
-        return epaper_waveshare_2in9_v2_display_frame(s_framebuffer, sizeof(s_framebuffer));
+    (void)dirty_regions;
+    esp_err_t render_err = display_lvgl_render_dashboard(&data);
+    if (render_err != ESP_OK) {
+        return render_err;
     }
-
-    if ((dirty_regions & DISPLAY_DIRTY_HEADER) != 0) {
-        display_render_dashboard_region(s_framebuffer, sizeof(s_framebuffer), &data, DISPLAY_RENDER_REGION_HEADER);
-    }
-    if ((dirty_regions & DISPLAY_DIRTY_WEATHER) != 0) {
-        display_render_dashboard_region(s_framebuffer, sizeof(s_framebuffer), &data, DISPLAY_RENDER_REGION_WEATHER);
-    }
-    if ((dirty_regions & DISPLAY_DIRTY_TODOS) != 0) {
-        display_render_dashboard_region(s_framebuffer, sizeof(s_framebuffer), &data, DISPLAY_RENDER_REGION_TODOS);
-    }
-
-    return epaper_waveshare_2in9_v2_display_region(s_framebuffer, sizeof(s_framebuffer), full_physical_rect());
+    return epaper_waveshare_2in9_v2_display_frame(s_framebuffer, sizeof(s_framebuffer));
 #else
     return ESP_ERR_NOT_SUPPORTED;
 #endif
@@ -385,6 +365,12 @@ static void display_task(void *arg)
         if (err == ESP_OK) {
             mark_display_available(true);
             ESP_LOGI(TAG, "display driver ready");
+            esp_err_t lvgl_err = display_lvgl_init(s_framebuffer, sizeof(s_framebuffer));
+            if (lvgl_err != ESP_OK) {
+                mark_display_available(false);
+                ESP_LOGW(TAG, "LVGL display unavailable: %s; dashboard persistence remains active", esp_err_to_name(lvgl_err));
+                vTaskDelete(NULL);
+            }
 #if MIMI_DISPLAY_DIAGNOSTIC_BOOT_PATTERN
             esp_err_t diagnostic_err = epaper_waveshare_2in9_v2_test_pattern();
             if (diagnostic_err != ESP_OK) {
