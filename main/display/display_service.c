@@ -2,6 +2,9 @@
 
 #include "display/display_lvgl.h"
 #include "display/epaper_waveshare_2in9_v2.h"
+#include "bus/message_bus.h"
+#include "llm/llm_proxy.h"
+#include "cron/cron_service.h"
 #include "tools/tool_get_time.h"
 #include "tools/tool_web_search.h"
 #include "util/utf8.h"
@@ -25,7 +28,8 @@ static const char *TAG = "display_service";
 #define DISPLAY_DIRTY_HEADER  BIT0
 #define DISPLAY_DIRTY_WEATHER BIT1
 #define DISPLAY_DIRTY_TODOS   BIT2
-#define DISPLAY_DIRTY_FULL    BIT3
+#define DISPLAY_DIRTY_QUOTE   BIT3
+#define DISPLAY_DIRTY_FULL    BIT4
 #define DISPLAY_BOOT_UPDATE_STACK 8192
 #define DISPLAY_BOOT_UPDATE_PRIO  3
 #define DISPLAY_STATE_TMP_FILE MIMI_DISPLAY_STATE_FILE ".tmp"
@@ -162,6 +166,8 @@ static esp_err_t save_state_locked(void)
     }
     cJSON_AddItemToObject(root, "todos", todos);
     cJSON_AddNumberToObject(root, "todos_updated_epoch", (double)s_state.todos_updated_epoch);
+    cJSON_AddStringToObject(root, "quote", s_state.quote);
+    cJSON_AddNumberToObject(root, "quote_updated_epoch", (double)s_state.quote_updated_epoch);
 
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -251,6 +257,11 @@ static esp_err_t load_state_locked(void)
         }
     }
 
+    const char *quote = cJSON_GetStringValue(cJSON_GetObjectItem(root, "quote"));
+    cJSON *quote_epoch = cJSON_GetObjectItem(root, "quote_updated_epoch");
+    mimi_copy_string_truncated_utf8(s_state.quote, sizeof(s_state.quote), quote);
+    s_state.quote_updated_epoch = cJSON_IsNumber(quote_epoch) ? (int64_t)quote_epoch->valuedouble : 0;
+
     cJSON_Delete(root);
     return ESP_OK;
 }
@@ -309,6 +320,7 @@ static esp_err_t build_dashboard_data(mimi_display_state_t *snapshot,
     for (size_t i = 0; i < snapshot->todo_count && i < MIMI_DISPLAY_MAX_TODOS; i++) {
         data->todos[i] = snapshot->todos[i];
     }
+    data->quote = snapshot->quote;
     return ESP_OK;
 }
 
@@ -533,6 +545,45 @@ static void display_boot_auto_update_task(void *arg)
         ESP_LOGW(TAG, "boot weather search failed: %s", esp_err_to_name(search_err));
     }
 
+    /* Generate initial daily quote if none exists */
+    {
+        mimi_display_state_t snapshot;
+        if (display_service_get_state(&snapshot) == ESP_OK && snapshot.quote[0] == '\0') {
+            cJSON *messages = cJSON_CreateArray();
+            cJSON *user_msg = cJSON_CreateObject();
+            cJSON_AddStringToObject(user_msg, "role", "user");
+            cJSON_AddStringToObject(user_msg, "content",
+                "请生成一句关于生活哲学的中文金句，控制在16字以内。只返回金句本身，不要加引号、标点或任何说明。");
+            cJSON_AddItemToArray(messages, user_msg);
+
+            llm_response_t resp;
+            memset(&resp, 0, sizeof(resp));
+            esp_err_t llm_err = llm_chat_tools(
+                "你是一位生活哲学家，用简洁的中文给出金句。", messages, NULL, &resp);
+            cJSON_Delete(messages);
+
+            if (llm_err == ESP_OK && resp.text && resp.text[0] != '\0') {
+                char *text = resp.text;
+                while (*text == ' ' || *text == '\t' || *text == '\r' || *text == '\n') {
+                    text++;
+                }
+                size_t len = strlen(text);
+                while (len > 0 && (text[len - 1] == ' ' || text[len - 1] == '\t' ||
+                                   text[len - 1] == '\r' || text[len - 1] == '\n')) {
+                    len--;
+                    text[len] = '\0';
+                }
+                if (text[0] != '\0') {
+                    display_service_set_quote(text, current_epoch_or_zero());
+                    ESP_LOGI(TAG, "boot quote generated: %s", text);
+                }
+            } else {
+                ESP_LOGW(TAG, "boot quote generation skipped (llm unavailable)");
+            }
+            llm_response_free(&resp);
+        }
+    }
+
     vTaskDelete(NULL);
 }
 
@@ -634,6 +685,25 @@ esp_err_t display_service_set_todos(const char *const *todos, size_t todo_count,
     return err;
 }
 
+esp_err_t display_service_set_quote(const char *quote, int64_t updated_epoch)
+{
+    if (!quote || quote[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = lock_state();
+    if (err != ESP_OK) {
+        return err;
+    }
+    mimi_copy_string_truncated_utf8(s_state.quote, sizeof(s_state.quote), quote);
+    s_state.quote_updated_epoch = updated_epoch > 0 ? updated_epoch : current_epoch_or_zero();
+    err = save_state_locked();
+    unlock_state();
+
+    request_refresh_for_dirty_region(DISPLAY_DIRTY_QUOTE);
+    return err;
+}
+
 esp_err_t display_service_get_state(mimi_display_state_t *state)
 {
     if (!state) {
@@ -671,6 +741,8 @@ esp_err_t display_service_get_state_json(char *output, size_t output_size)
     cJSON_AddNumberToObject(root, "todos_updated_epoch", (double)snapshot.todos_updated_epoch);
     cJSON_AddBoolToObject(root, "display_available", snapshot.display_available);
     cJSON_AddBoolToObject(root, "service_started", snapshot.service_started);
+    cJSON_AddStringToObject(root, "quote", snapshot.quote);
+    cJSON_AddNumberToObject(root, "quote_updated_epoch", (double)snapshot.quote_updated_epoch);
 
     cJSON *todos = cJSON_CreateArray();
     if (!todos) {
@@ -691,6 +763,38 @@ esp_err_t display_service_get_state_json(char *output, size_t output_size)
     snprintf(output, output_size, "%s", json);
     cJSON_free(json);
     return ESP_OK;
+}
+
+void display_service_setup_daily_quote(void)
+{
+    const cron_job_t *jobs;
+    int count;
+    cron_list_jobs(&jobs, &count);
+    for (int i = 0; i < count; i++) {
+        if (strcmp(jobs[i].name, "每日金句") == 0) {
+            ESP_LOGI(TAG, "daily quote cron job already exists");
+            return;
+        }
+    }
+
+    cron_job_t job;
+    memset(&job, 0, sizeof(job));
+    strncpy(job.name, "每日金句", sizeof(job.name) - 1);
+    job.kind = CRON_KIND_EVERY;
+    job.interval_s = 24 * 60 * 60;
+    strncpy(job.message,
+            "请在墨水屏上更新每日金句，生成一句关于生活哲学的中文金句，控制在16字以内，"
+            "调用 display_set_quote 工具保存",
+            sizeof(job.message) - 1);
+    strncpy(job.channel, MIMI_CHAN_SYSTEM, sizeof(job.channel) - 1);
+    strncpy(job.chat_id, "daily_quote", sizeof(job.chat_id) - 1);
+
+    esp_err_t err = cron_add_job(&job);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "daily quote cron job added (id=%s)", job.id);
+    } else {
+        ESP_LOGW(TAG, "failed to add daily quote cron job: %s", esp_err_to_name(err));
+    }
 }
 
 bool display_service_is_display_available(void)

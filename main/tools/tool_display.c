@@ -171,6 +171,32 @@ esp_err_t tool_display_set_todos_execute(const char *input_json, char *output, s
     return ESP_OK;
 }
 
+esp_err_t tool_display_set_quote_execute(const char *input_json, char *output, size_t output_size)
+{
+    cJSON *root = parse_json_or_error(input_json, output, output_size);
+    if (!root) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char quote[MIMI_DISPLAY_QUOTE_LEN];
+    copy_trimmed_string(quote, sizeof(quote), cJSON_GetStringValue(cJSON_GetObjectItem(root, "quote")));
+    cJSON_Delete(root);
+
+    if (quote[0] == '\0') {
+        snprintf(output, output_size, "Error: 'quote' required");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = display_service_set_quote(quote, 0);
+    if (err != ESP_OK) {
+        snprintf(output, output_size, "Error: failed to set quote (%s)", esp_err_to_name(err));
+        return err;
+    }
+
+    snprintf(output, output_size, "OK: dashboard quote saved");
+    return ESP_OK;
+}
+
 esp_err_t tool_display_get_state_execute(const char *input_json, char *output, size_t output_size)
 {
     (void)input_json;

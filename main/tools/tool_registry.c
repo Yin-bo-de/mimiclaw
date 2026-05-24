@@ -281,6 +281,17 @@ esp_err_t tool_registry_init(void)
     };
     register_tool(&dr);
 
+    mimi_tool_t dsq = {
+        .name = "display_set_quote",
+        .description = "Set a daily life-philosophy quote on the e-paper dashboard. Generate a short Chinese quote (16 chars max) about life wisdom.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{\"quote\":{\"type\":\"string\",\"description\":\"A short life philosophy quote in Chinese, max 16 characters\"}},"
+            "\"required\":[\"quote\"]}",
+        .execute = tool_display_set_quote_execute,
+    };
+    register_tool(&dsq);
+
     build_tools_json();
 
     ESP_LOGI(TAG, "Tool registry initialized");

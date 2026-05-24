@@ -21,6 +21,7 @@ static lv_obj_t *s_weather_city_label;
 static lv_obj_t *s_weather_summary_label;
 static lv_obj_t *s_todos_title_label;
 static lv_obj_t *s_todo_labels[MIMI_DISPLAY_MAX_TODOS];
+static lv_obj_t *s_quote_label;
 
 static void flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t *px_map)
 {
@@ -64,22 +65,26 @@ static void create_dashboard_objects(void)
     lv_obj_clear_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
 
     s_header_label = lv_label_create(s_root);
-    configure_label(s_header_label, 4, 2, 288, 20);
+    configure_label(s_header_label, 4, 2, 288, 18);
 
     s_weather_city_label = lv_label_create(s_root);
-    configure_label(s_weather_city_label, 6, 28, 146, 20);
+    configure_label(s_weather_city_label, 6, 24, 140, 18);
 
     s_weather_summary_label = lv_label_create(s_root);
-    configure_label(s_weather_summary_label, 6, 51, 146, 56);
+    configure_label(s_weather_summary_label, 6, 44, 140, 44);
     lv_label_set_long_mode(s_weather_summary_label, LV_LABEL_LONG_WRAP);
 
     s_todos_title_label = lv_label_create(s_root);
-    configure_label(s_todos_title_label, 166, 28, 120, 20);
+    configure_label(s_todos_title_label, 158, 24, 130, 18);
 
     for (size_t i = 0; i < MIMI_DISPLAY_MAX_TODOS; i++) {
         s_todo_labels[i] = lv_label_create(s_root);
-        configure_label(s_todo_labels[i], 166, 50 + (int)i * 15, 124, 16);
+        configure_label(s_todo_labels[i], 158, 44 + (int)i * 13, 124, 14);
     }
+
+    s_quote_label = lv_label_create(s_root);
+    configure_label(s_quote_label, 6, 112, 284, 16);
+    lv_obj_set_style_text_align(s_quote_label, LV_TEXT_ALIGN_CENTER, 0);
 
     lv_screen_load(s_root);
 }
@@ -149,6 +154,8 @@ esp_err_t display_lvgl_render_dashboard(const display_dashboard_data_t *data)
             lv_label_set_text(s_todo_labels[i], "");
         }
     }
+
+    lv_label_set_text(s_quote_label, data->quote && data->quote[0] ? data->quote : "");
 
     lv_obj_invalidate(s_root);
     lv_refr_now(s_display);

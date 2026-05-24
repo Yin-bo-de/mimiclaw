@@ -37,3 +37,9 @@ esp_err_t tool_display_get_state_execute(const char *input_json, char *output, s
  * Input JSON: {"now":true?}
  */
 esp_err_t tool_display_refresh_execute(const char *input_json, char *output, size_t output_size);
+
+/**
+ * Set the daily quote on the e-paper dashboard.
+ * Input JSON: {"quote":"生活哲学金句"}
+ */
+esp_err_t tool_display_set_quote_execute(const char *input_json, char *output, size_t output_size);

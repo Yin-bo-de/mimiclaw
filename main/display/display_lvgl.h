@@ -25,6 +25,7 @@ typedef struct {
     const char *weather_summary;
     const char *todos[5];
     size_t todo_count;
+    const char *quote;
 } display_dashboard_data_t;
 
 esp_err_t display_lvgl_init(uint8_t *framebuffer, size_t framebuffer_len);
