@@ -91,11 +91,9 @@ static void create_dashboard_objects(void)
 
     s_weather_city_label = lv_label_create(s_root);
     configure_label(s_weather_city_label, 6, 24, 140, 18);
-    lv_obj_set_style_text_color(s_weather_city_label, lv_color_hex(0xF5C400), 0);
 
     s_weather_summary_label = lv_label_create(s_root);
     configure_label(s_weather_summary_label, 6, 44, 140, 44);
-    lv_obj_set_style_text_color(s_weather_summary_label, lv_color_hex(0xF5C400), 0);
     lv_label_set_long_mode(s_weather_summary_label, LV_LABEL_LONG_WRAP);
 
     s_todos_title_label = lv_label_create(s_root);
