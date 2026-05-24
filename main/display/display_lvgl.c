@@ -22,6 +22,9 @@ static lv_obj_t *s_weather_summary_label;
 static lv_obj_t *s_todos_title_label;
 static lv_obj_t *s_todo_labels[MIMI_DISPLAY_MAX_TODOS];
 static lv_obj_t *s_quote_label;
+static lv_obj_t *s_header_separator;
+static lv_obj_t *s_column_separator;
+static lv_obj_t *s_quote_separator;
 
 static void flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t *px_map)
 {
@@ -54,24 +57,45 @@ static void configure_label(lv_obj_t *label, int x, int y, int width, int height
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
 }
 
+static lv_obj_t *create_separator(lv_obj_t *parent, int x, int y, int width, int height)
+{
+    lv_obj_t *separator = lv_obj_create(parent);
+    lv_obj_set_pos(separator, x, y);
+    lv_obj_set_size(separator, width, height);
+    lv_obj_set_style_bg_color(separator, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(separator, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(separator, 0, 0);
+    lv_obj_set_style_pad_all(separator, 0, 0);
+    lv_obj_clear_flag(separator, LV_OBJ_FLAG_SCROLLABLE);
+    return separator;
+}
+
 static void create_dashboard_objects(void)
 {
     s_root = lv_obj_create(NULL);
     lv_obj_set_size(s_root, DISPLAY_LVGL_WIDTH, DISPLAY_LVGL_HEIGHT);
     lv_obj_set_style_bg_color(s_root, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_root, 0, 0);
+    lv_obj_set_style_border_width(s_root, 1, 0);
+    lv_obj_set_style_border_color(s_root, lv_color_black(), 0);
+    lv_obj_set_style_border_side(s_root, LV_BORDER_SIDE_FULL, 0);
     lv_obj_set_style_pad_all(s_root, 0, 0);
     lv_obj_clear_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_header_separator = create_separator(s_root, 0, 21, DISPLAY_LVGL_WIDTH, 1);
+    s_column_separator = create_separator(s_root, 156, 22, 1, 88);
+    s_quote_separator = create_separator(s_root, 0, 110, DISPLAY_LVGL_WIDTH, 1);
 
     s_header_label = lv_label_create(s_root);
     configure_label(s_header_label, 4, 2, 288, 18);
 
     s_weather_city_label = lv_label_create(s_root);
     configure_label(s_weather_city_label, 6, 24, 140, 18);
+    lv_obj_set_style_text_color(s_weather_city_label, lv_color_hex(0xF5C400), 0);
 
     s_weather_summary_label = lv_label_create(s_root);
     configure_label(s_weather_summary_label, 6, 44, 140, 44);
+    lv_obj_set_style_text_color(s_weather_summary_label, lv_color_hex(0xF5C400), 0);
     lv_label_set_long_mode(s_weather_summary_label, LV_LABEL_LONG_WRAP);
 
     s_todos_title_label = lv_label_create(s_root);
@@ -83,7 +107,7 @@ static void create_dashboard_objects(void)
     }
 
     s_quote_label = lv_label_create(s_root);
-    configure_label(s_quote_label, 6, 112, 284, 16);
+    configure_label(s_quote_label, 6, 111, 284, 16);
     lv_obj_set_style_text_align(s_quote_label, LV_TEXT_ALIGN_CENTER, 0);
 
     lv_screen_load(s_root);

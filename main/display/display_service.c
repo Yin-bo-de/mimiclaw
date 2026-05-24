@@ -1,4 +1,95 @@
+#ifdef MIMI_DISPLAY_SERVICE_WEATHER_PARSE_TEST
+typedef int esp_err_t;
+#define ESP_OK 0
+#define ESP_FAIL -1
+#define ESP_ERR_INVALID_ARG 0x102
+#else
 #include "display/display_service.h"
+#endif
+
+#include "util/utf8.h"
+
+#include <ctype.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <time.h>
+
+#ifdef MIMI_DISPLAY_SERVICE_WEATHER_PARSE_TEST
+#define MIMI_WEATHER_PARSE_VISIBILITY
+#else
+#define MIMI_WEATHER_PARSE_VISIBILITY static __attribute__((unused))
+#endif
+
+static void copy_trimmed_weather_line(const char *line, size_t len, char *output, size_t output_size)
+{
+    while (len > 0 && (isspace((unsigned char)*line))) {
+        line++;
+        len--;
+    }
+    while (len > 0 && (isspace((unsigned char)line[len - 1]))) {
+        len--;
+    }
+
+    size_t copy_len = len;
+    if (copy_len >= output_size) {
+        copy_len = output_size - 1;
+    }
+    memcpy(output, line, copy_len);
+    output[copy_len] = '\0';
+    mimi_trim_incomplete_utf8_tail(output);
+}
+
+MIMI_WEATHER_PARSE_VISIBILITY esp_err_t parse_wttr_weather_response(const char *response,
+                                                                    char *city,
+                                                                    size_t city_size,
+                                                                    char *summary,
+                                                                    size_t summary_size)
+{
+    if (!response || !city || city_size == 0 || !summary || summary_size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    city[0] = '\0';
+    summary[0] = '\0';
+
+    const char *cursor = response;
+    size_t parsed_count = 0;
+    while (*cursor != '\0' && parsed_count < 2) {
+        size_t line_len = strcspn(cursor, "\r\n");
+        const char *line = cursor;
+        size_t trimmed_len = line_len;
+        while (trimmed_len > 0 && (isspace((unsigned char)*line))) {
+            line++;
+            trimmed_len--;
+        }
+        while (trimmed_len > 0 && (line[trimmed_len - 1] == ' ' || line[trimmed_len - 1] == '\t')) {
+            trimmed_len--;
+        }
+
+        if (trimmed_len > 0) {
+            if (parsed_count == 0) {
+                copy_trimmed_weather_line(cursor, line_len, city, city_size);
+            } else {
+                copy_trimmed_weather_line(cursor, line_len, summary, summary_size);
+            }
+            parsed_count++;
+        }
+
+        cursor += line_len;
+        while (*cursor == '\r' || *cursor == '\n') {
+            cursor++;
+        }
+    }
+
+    return parsed_count > 0 ? ESP_OK : ESP_FAIL;
+}
+
+#ifdef MIMI_DISPLAY_SERVICE_WEATHER_PARSE_TEST
+#undef MIMI_WEATHER_PARSE_VISIBILITY
+#else
 
 #include "display/display_lvgl.h"
 #include "display/epaper_waveshare_2in9_v2.h"
@@ -6,21 +97,15 @@
 #include "llm/llm_proxy.h"
 #include "cron/cron_service.h"
 #include "tools/tool_get_time.h"
-#include "tools/tool_web_search.h"
-#include "util/utf8.h"
 
 #include "cJSON.h"
+#include "esp_crt_bundle.h"
+#include "esp_http_client.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <time.h>
 
 static const char *TAG = "display_service";
 
@@ -33,10 +118,19 @@ static const char *TAG = "display_service";
 #define DISPLAY_BOOT_UPDATE_STACK 8192
 #define DISPLAY_BOOT_UPDATE_PRIO  3
 #define DISPLAY_STATE_TMP_FILE MIMI_DISPLAY_STATE_FILE ".tmp"
+#define DISPLAY_WEATHER_HTTP_BUF_SIZE 512
+#define DISPLAY_WEATHER_HTTP_TIMEOUT_MS 10000
+#define DISPLAY_WEATHER_WTTR_URL "http://wttr.in/?format=%l%0A%C+%t&lang=zh"
 
 typedef struct {
     char ip_address[16];
 } display_boot_update_ctx_t;
+
+typedef struct {
+    char data[DISPLAY_WEATHER_HTTP_BUF_SIZE];
+    size_t len;
+    bool truncated;
+} display_weather_http_buf_t;
 
 static mimi_display_state_t s_state;
 static SemaphoreHandle_t s_state_mutex;
@@ -53,58 +147,68 @@ static int64_t current_epoch_or_zero(void)
     return now > 0 ? (int64_t)now : 0;
 }
 
-static bool search_line_is_url(const char *line)
+static esp_err_t weather_http_event_handler(esp_http_client_event_t *evt)
 {
-    return strncmp(line, "http://", 7) == 0 || strncmp(line, "https://", 8) == 0;
+    display_weather_http_buf_t *buf = (display_weather_http_buf_t *)evt->user_data;
+    if (evt->event_id == HTTP_EVENT_ON_DATA && buf && evt->data && evt->data_len > 0) {
+        size_t available = sizeof(buf->data) - buf->len - 1;
+        size_t copy_len = (size_t)evt->data_len;
+        if (copy_len > available) {
+            copy_len = available;
+            buf->truncated = true;
+        }
+        if (copy_len > 0) {
+            memcpy(buf->data + buf->len, evt->data, copy_len);
+            buf->len += copy_len;
+            buf->data[buf->len] = '\0';
+        }
+    }
+    return ESP_OK;
 }
 
-static bool search_line_is_result_title(const char *line)
+static esp_err_t fetch_weather_wttr(char *city, size_t city_size, char *summary, size_t summary_size)
 {
-    const char *cursor = line;
-    while (*cursor >= '0' && *cursor <= '9') {
-        cursor++;
+    if (!city || city_size == 0 || !summary || summary_size == 0) {
+        return ESP_ERR_INVALID_ARG;
     }
-    return cursor > line && cursor[0] == '.' && cursor[1] == ' ';
-}
 
-static void copy_line_summary(const char *line, size_t len, char *summary, size_t summary_size)
-{
-    if (len >= summary_size) {
-        len = summary_size - 1;
-    }
-    memcpy(summary, line, len);
-    summary[len] = '\0';
-    mimi_trim_incomplete_utf8_tail(summary);
-}
-
-static void extract_search_summary(const char *search_output, char *summary, size_t summary_size)
-{
-    if (!summary || summary_size == 0) {
-        return;
-    }
+    city[0] = '\0';
     summary[0] = '\0';
-    if (!search_output || search_output[0] == '\0') {
-        return;
+
+    display_weather_http_buf_t response = {0};
+    esp_http_client_config_t config = {
+        .url = DISPLAY_WEATHER_WTTR_URL,
+        .timeout_ms = DISPLAY_WEATHER_HTTP_TIMEOUT_MS,
+        .event_handler = weather_http_event_handler,
+        .user_data = &response,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        return ESP_ERR_NO_MEM;
     }
 
-    const char *cursor = search_output;
-    while (*cursor != '\0') {
-        while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') {
-            cursor++;
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        int status = esp_http_client_get_status_code(client);
+        if (status != 200) {
+            ESP_LOGW(TAG, "wttr weather HTTP status=%d", status);
+            err = ESP_FAIL;
+        } else if (response.truncated) {
+            ESP_LOGW(TAG, "wttr weather response truncated at %u bytes", (unsigned)response.len);
+            err = ESP_FAIL;
+        } else {
+            err = parse_wttr_weather_response(response.data, city, city_size, summary, summary_size);
+            if (err == ESP_OK && (city[0] == '\0' || summary[0] == '\0')) {
+                ESP_LOGW(TAG, "wttr weather response missing city or summary");
+                err = ESP_FAIL;
+            }
         }
-        size_t len = strcspn(cursor, "\r\n");
-        if (len == 0) {
-            break;
-        }
-
-        char line[256];
-        copy_line_summary(cursor, len, line, sizeof(line));
-        if (!search_line_is_result_title(line) && !search_line_is_url(line)) {
-            copy_line_summary(line, strlen(line), summary, summary_size);
-            return;
-        }
-        cursor += len;
     }
+
+    esp_http_client_cleanup(client);
+    return err;
 }
 
 static esp_err_t lock_state(void)
@@ -529,20 +633,18 @@ static void display_boot_auto_update_task(void *arg)
         ESP_LOGW(TAG, "boot time update failed: %s", esp_err_to_name(time_err));
     }
 
-    char query[160];
-    snprintf(query, sizeof(query), "{\"query\":\"根据公网IP %s 判断当前位置并给出当前天气，返回城市和天气摘要\"}",
-             ip_address[0] ? ip_address : "当前网络");
-
-    char search_output[1024];
-    esp_err_t search_err = tool_web_search_execute(query, search_output, sizeof(search_output));
-    if (search_err == ESP_OK) {
-        char summary[MIMI_DISPLAY_WEATHER_SUMMARY_LEN];
-        extract_search_summary(search_output, summary, sizeof(summary));
-        if (summary[0] != '\0') {
-            display_service_set_weather("当前位置", summary, current_epoch_or_zero());
+    char city[MIMI_DISPLAY_WEATHER_CITY_LEN];
+    char summary[MIMI_DISPLAY_WEATHER_SUMMARY_LEN];
+    esp_err_t weather_err = fetch_weather_wttr(city, sizeof(city), summary, sizeof(summary));
+    if (weather_err == ESP_OK) {
+        esp_err_t set_err = display_service_set_weather(city, summary, current_epoch_or_zero());
+        if (set_err == ESP_OK) {
+            ESP_LOGI(TAG, "boot weather updated: %s - %s", city, summary);
+        } else {
+            ESP_LOGW(TAG, "boot weather update failed: %s; keeping persisted weather", esp_err_to_name(set_err));
         }
     } else {
-        ESP_LOGW(TAG, "boot weather search failed: %s", esp_err_to_name(search_err));
+        ESP_LOGW(TAG, "boot weather fetch failed: %s; keeping persisted weather", esp_err_to_name(weather_err));
     }
 
     /* Generate initial daily quote if none exists */
@@ -806,3 +908,5 @@ bool display_service_is_display_available(void)
     }
     return available;
 }
+
+#endif /* MIMI_DISPLAY_SERVICE_WEATHER_PARSE_TEST */
