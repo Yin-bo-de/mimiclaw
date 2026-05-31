@@ -86,6 +86,62 @@ static cJSON *build_situation_json(const nav_situation_t *sit)
     return s;
 }
 
+/* Map ultrasonic sensor index 0/1/2 → "left"/"front"/"right" for LLM-friendly output. */
+static const char *sensor_idx_name(int idx)
+{
+    switch (idx) {
+    case 0:  return "left";
+    case 1:  return "front";
+    case 2:  return "right";
+    default: return "unknown";
+    }
+}
+
+/* Build a stale_sensors diagnostic array from current situation.
+ * A sensor is flagged when distance_valid is false OR last update older than stale_us.
+ * Also reports IMU/GPS staleness as separate entries. */
+static cJSON *build_stale_sensors_json(const nav_situation_t *sit, int64_t stale_us)
+{
+    cJSON *arr = cJSON_CreateArray();
+    if (!sit) return arr;
+    int64_t now = esp_timer_get_time();
+
+    for (int i = 0; i < 3; i++) {
+        int64_t age_us = now - sit->distance_ts_us[i];
+        bool stale = (!sit->distance_valid[i]) || (age_us >= stale_us);
+        if (!stale) continue;
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "sensor",   sensor_idx_name(i));
+        cJSON_AddNumberToObject(e, "sensor_idx", i);
+        cJSON_AddBoolToObject(e,   "valid",    sit->distance_valid[i]);
+        cJSON_AddNumberToObject(e, "stale_ms", (double)(age_us / 1000));
+        cJSON_AddNumberToObject(e, "last_cm",  sit->distances_cm[i]);
+        cJSON_AddItemToArray(arr, e);
+    }
+
+    /* IMU staleness (use same threshold) */
+    int64_t imu_age = now - sit->imu_ts_us;
+    if (!sit->imu_valid || imu_age >= stale_us) {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "sensor",   "imu");
+        cJSON_AddBoolToObject(e,   "valid",    sit->imu_valid);
+        cJSON_AddNumberToObject(e, "stale_ms", (double)(imu_age / 1000));
+        cJSON_AddItemToArray(arr, e);
+    }
+
+    /* GPS: fix loss is reported elsewhere (LOST event); only include if very stale. */
+    int64_t gps_age = now - sit->gps_ts_us;
+    if (gps_age >= stale_us) {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "sensor",   "gps");
+        cJSON_AddBoolToObject(e,   "fix",      sit->gps_fix);
+        cJSON_AddNumberToObject(e, "stale_ms", (double)(gps_age / 1000));
+        cJSON_AddItemToArray(arr, e);
+    }
+
+    return arr;
+}
+
 static void emit_to_bus(const char *kind_str, cJSON *root)
 {
     if (!root) return;
@@ -181,7 +237,7 @@ void nav_escalate_arrived(const nav_situation_t *sit, int64_t duration_s,
 }
 
 void nav_escalate_aborted(const nav_situation_t *sit, const char *reason,
-                          double dist_remaining_m)
+                          double dist_remaining_m, const cJSON *detail)
 {
     if (!can_emit(ESC_ABORTED)) return;
 
@@ -195,8 +251,31 @@ void nav_escalate_aborted(const nav_situation_t *sit, const char *reason,
     }
 
     cJSON_AddStringToObject(root, "reason", reason ? reason : "unknown");
-    cJSON_AddStringToObject(root, "hint",
-        "Notify the user that navigation stopped, include reason.");
+
+    /* Auto-attach sensor diagnostics when stop was due to stale sensors.
+     * SENSOR_STALE_US lives in nav_l2_fsm.c; we mirror the value (2 s)
+     * — keeping it here as a literal so escalate is self-contained. */
+    if (reason && strcmp(reason, "sensors_lost") == 0) {
+        cJSON_AddItemToObject(root, "stale_sensors",
+                              build_stale_sensors_json(sit, 2LL * 1000000LL));
+        cJSON_AddItemToObject(root, "situation", build_situation_json(sit));
+        cJSON_AddStringToObject(root, "hint",
+            "用中文告诉用户：哪些传感器在多少毫秒内未更新数据导致停车，"
+            "结合 stale_sensors 数组列出具体传感器名（left/front/right/imu/gps），"
+            "建议用户检查传感器接线或重启设备。");
+    } else {
+        cJSON_AddStringToObject(root, "hint",
+            "用中文告诉用户导航已停止，并说明 reason 字段中的原因。");
+    }
+
+    /* Merge caller-provided detail object (shallow copy of its children). */
+    if (detail && cJSON_IsObject(detail)) {
+        cJSON *child = NULL;
+        cJSON_ArrayForEach(child, detail) {
+            cJSON *copy = cJSON_Duplicate(child, 1);
+            if (copy) cJSON_AddItemToObject(root, child->string, copy);
+        }
+    }
 
     emit_to_bus("ABORTED", root);
 }
@@ -205,14 +284,58 @@ void nav_escalate_aborted(const nav_situation_t *sit, const char *reason,
 /*  Anomaly event                                                       */
 /* ------------------------------------------------------------------ */
 
-void nav_escalate_no_path(const nav_situation_t *sit)
+void nav_escalate_emergency_stop(const nav_situation_t *sit,
+                                 int sensor_idx,
+                                 int distance_cm,
+                                 int threshold_cm)
+{
+    if (!can_emit(ESC_EMERGENCY_STOP)) return;
+
+    cJSON *root = cJSON_CreateObject();
+
+    cJSON *trig = cJSON_CreateObject();
+    cJSON_AddStringToObject(trig, "sensor",       sensor_idx_name(sensor_idx));
+    cJSON_AddNumberToObject(trig, "sensor_idx",   sensor_idx);
+    cJSON_AddNumberToObject(trig, "distance_cm",  distance_cm);
+    cJSON_AddNumberToObject(trig, "threshold_cm", threshold_cm);
+    cJSON_AddItemToObject(root, "trigger", trig);
+
+    cJSON_AddItemToObject(root, "situation", build_situation_json(sit));
+
+    cJSON_AddStringToObject(root, "hint",
+        "用中文告诉用户：trigger.sensor 方向超声波检测到 trigger.distance_cm 厘米"
+        "障碍物，已低于紧急刹车阈值 trigger.threshold_cm 厘米，车辆已紧急停止。"
+        "请挪开障碍或后退后再继续行驶。");
+
+    emit_to_bus("EMERGENCY_STOP", root);
+}
+
+void nav_escalate_no_path(const nav_situation_t *sit,
+                          int replan_attempts, int clear_cm_threshold)
 {
     if (!can_emit(ESC_NO_PATH)) return;
 
     cJSON *root = cJSON_CreateObject();
     cJSON_AddItemToObject(root, "situation", build_situation_json(sit));
+
+    /* Diagnostics: tell LLM exactly why every direction was blocked. */
+    cJSON *diag = cJSON_CreateObject();
+    cJSON *dist = cJSON_CreateObject();
+    if (sit) {
+        cJSON_AddNumberToObject(dist, "left",  sit->distances_cm[0]);
+        cJSON_AddNumberToObject(dist, "front", sit->distances_cm[1]);
+        cJSON_AddNumberToObject(dist, "right", sit->distances_cm[2]);
+    }
+    cJSON_AddItemToObject(diag,  "distances_cm",      dist);
+    cJSON_AddNumberToObject(diag, "clear_threshold_cm", clear_cm_threshold);
+    cJSON_AddNumberToObject(diag, "replan_attempts",    replan_attempts);
+    cJSON_AddNumberToObject(diag, "max_replan_allowed", 3);
+    cJSON_AddItemToObject(root,  "diagnostics", diag);
+
     cJSON_AddStringToObject(root, "hint",
-        "Call nav_abort and ask the user if they want to try a different route.");
+        "用中文告诉用户：前/左/右三方向的距离值（来自 diagnostics.distances_cm），"
+        "均小于通行阈值 clear_threshold_cm，经过 replan_attempts 次重新规划仍无路可走。"
+        "调用 nav_abort 并询问用户是否切换路线。");
 
     emit_to_bus("NO_PATH", root);
 }

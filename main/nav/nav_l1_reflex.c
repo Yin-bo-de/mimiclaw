@@ -1,6 +1,7 @@
 #include "nav/nav_l1_reflex.h"
 #include "nav/nav_situation.h"
 #include "nav/nav_config.h"
+#include "nav/nav_escalate.h"
 #include "tools/tool_pwm.h"
 #include "mimi_config.h"
 
@@ -35,6 +36,7 @@ static void l1_task(void *arg)
 
         int64_t now = esp_timer_get_time();
         int min_d = INT_MAX;
+        int min_idx = -1;          /* which sensor produced min_d */
         bool any_valid = false;
 
         for (int i = 0; i < 3; i++) {
@@ -42,6 +44,7 @@ static void l1_task(void *arg)
                 (now - sit.distance_ts_us[i]) < STALE_US) {
                 if (sit.distances_cm[i] < min_d) {
                     min_d = sit.distances_cm[i];
+                    min_idx = i;
                 }
                 any_valid = true;
             }
@@ -49,8 +52,13 @@ static void l1_task(void *arg)
 
         if (any_valid && min_d < cfg->emergency_stop_cm) {
             if (!s_blocked) {
-                ESP_LOGW(TAG, "EMERGENCY STOP: min_d=%d cm (threshold=%d cm)",
-                         min_d, cfg->emergency_stop_cm);
+                const char *sname = (min_idx == 0 ? "left" :
+                                     min_idx == 1 ? "front" :
+                                     min_idx == 2 ? "right" : "unknown");
+                ESP_LOGW(TAG, "EMERGENCY STOP: %s sensor min_d=%d cm (threshold=%d cm)",
+                         sname, min_d, cfg->emergency_stop_cm);
+                /* Escalate to LLM so user learns *why* the car stopped. */
+                nav_escalate_emergency_stop(&sit, min_idx, min_d, cfg->emergency_stop_cm);
             }
             s_blocked = true;
             /* Force throttle to zero every tick while blocked — overrides L2/dummy */

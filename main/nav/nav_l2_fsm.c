@@ -170,10 +170,13 @@ static void enter_state(l2_state_t new_state)
     if (new_state == L2_REPLAN) {
         s_replan_count++;
         if (s_replan_count > 3) {
-            ESP_LOGW(TAG, "NO_PATH: replan_count=%d — entering FAULT", s_replan_count);
+            const nav_config_t *cfg = nav_config_get();
             nav_situation_t tmp_sit;
             nav_situation_get(&tmp_sit);
-            nav_escalate_no_path(&tmp_sit);
+            ESP_LOGW(TAG, "NO_PATH: replan_count=%d clear_cm=%d distances L=%dcm F=%dcm R=%dcm — entering FAULT",
+                     s_replan_count, cfg->clear_cm,
+                     tmp_sit.distances_cm[0], tmp_sit.distances_cm[1], tmp_sit.distances_cm[2]);
+            nav_escalate_no_path(&tmp_sit, s_replan_count, cfg->clear_cm);
             new_state = L2_FAULT;
         }
     }
@@ -414,7 +417,7 @@ static void l2_task(void *arg)
                     dist_rem = nav_planner_distance_m(sit.lat, sit.lon,
                                                       s_goal_lat, s_goal_lon);
                 }
-                nav_escalate_aborted(&sit, "user_abort", dist_rem);
+                nav_escalate_aborted(&sit, "user_abort", dist_rem, NULL);
                 enter_state(L2_FAULT);
                 rc_nav_throttle(0);
                 rc_nav_steer(0);
@@ -435,8 +438,20 @@ static void l2_task(void *arg)
             s_state != L2_ARRIVED &&
             s_state != L2_FAULT) {
             if (!sensors_ok(&sit)) {
-                ESP_LOGE(TAG, "Sensor stale — FAULT");
-                nav_escalate_aborted(&sit, "sensors_lost", 0.0);
+                int64_t now = esp_timer_get_time();
+                ESP_LOGE(TAG, "Sensor stale → enter FAULT");
+                for (int i = 0; i < 3; i++) {
+                    int64_t age_ms = (now - sit.distance_ts_us[i]) / 1000LL;
+                    if (!sit.distance_valid[i] || (now - sit.distance_ts_us[i]) >= SENSOR_STALE_US) {
+                        ESP_LOGE(TAG, "  ultrasonic[%d/%s] valid=%d age=%lldms last=%dcm",
+                                 i,
+                                 (i == 0 ? "left" : (i == 1 ? "front" : "right")),
+                                 sit.distance_valid[i],
+                                 (long long)age_ms,
+                                 sit.distances_cm[i]);
+                    }
+                }
+                nav_escalate_aborted(&sit, "sensors_lost", 0.0, NULL);
                 enter_state(L2_FAULT);
                 rc_nav_throttle(0);
                 rc_nav_steer(0);

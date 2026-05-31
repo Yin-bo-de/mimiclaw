@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nav/nav_situation.h"
+#include "cJSON.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -13,6 +14,7 @@ typedef enum {
     ESC_NO_PATH,
     ESC_LOST,
     ESC_GOAL_UNREACHABLE,
+    ESC_EMERGENCY_STOP,
     ESC_ARRIVED,
     ESC_ABORTED,
     ESC_COUNT
@@ -49,16 +51,34 @@ void nav_escalate_arrived(const nav_situation_t *sit, int64_t duration_s,
  * @param sit              Current nav situation (may be NULL).
  * @param reason           "user_abort" | "sensors_lost" | "fault".
  * @param dist_remaining_m Remaining metres to goal (0 if unknown).
+ * @param detail           Optional cJSON object to merge into payload (e.g. stale_sensors).
+ *                         Caller retains ownership; function makes a copy.  Pass NULL if none.
  */
 void nav_escalate_aborted(const nav_situation_t *sit, const char *reason,
-                          double dist_remaining_m);
+                          double dist_remaining_m, const cJSON *detail);
 
 /* ------------------------------------------------------------------ */
 /*  Anomaly events — 60 s cooldown per kind                            */
 /* ------------------------------------------------------------------ */
 
 /** Emit NO_PATH — called when L2 replan_count > 3. */
-void nav_escalate_no_path(const nav_situation_t *sit);
+void nav_escalate_no_path(const nav_situation_t *sit,
+                          int replan_attempts, int clear_cm_threshold);
+
+/**
+ * Emit EMERGENCY_STOP — called by L1 reflex when ultrasonic distance
+ * falls below emergency_stop_cm threshold.  Tells the LLM exactly which
+ * sensor triggered, the measured distance and the configured threshold.
+ *
+ * @param sit          Current nav situation snapshot.
+ * @param sensor_idx   0=left, 1=front, 2=right (which sensor triggered).
+ * @param distance_cm  Measured distance that crossed the threshold.
+ * @param threshold_cm Configured emergency_stop_cm.
+ */
+void nav_escalate_emergency_stop(const nav_situation_t *sit,
+                                 int sensor_idx,
+                                 int distance_cm,
+                                 int threshold_cm);
 
 /* ------------------------------------------------------------------ */
 /*  Periodic detection — call from L2 task each tick while navigating  */
