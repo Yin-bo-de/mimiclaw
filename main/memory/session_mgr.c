@@ -8,21 +8,210 @@
 #include <time.h>
 #include "esp_log.h"
 #include "cJSON.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
 
 static const char *TAG = "session";
+
+/* ------------------------------------------------------------------ */
+/*  RPC infrastructure: all SPIFFS I/O is delegated to a Core-0 worker */
+/* ------------------------------------------------------------------ */
+
+typedef enum {
+    SESSION_OP_GET_HISTORY,
+    SESSION_OP_APPEND,
+    SESSION_OP_CLEAR,
+    SESSION_OP_LIST,
+} session_op_t;
+
+typedef struct {
+    session_op_t op;
+    char chat_id[64];
+    char role[16];
+    const char *content;
+    char *buf;
+    size_t buf_size;
+    int max_msgs;
+    esp_err_t *result;
+    TaskHandle_t caller;
+} session_request_t;
+
+static QueueHandle_t session_queue = NULL;
+static bool session_initialized = false;
+
+/* Forward declarations for the real SPIFFS-backed implementations */
+static void session_path(const char *chat_id, char *buf, size_t size);
+static esp_err_t session_append_impl(const char *chat_id, const char *role, const char *content);
+static esp_err_t session_get_history_json_impl(const char *chat_id, char *buf, size_t size, int max_msgs);
+static esp_err_t session_clear_impl(const char *chat_id);
+static void session_list_impl(void);
+
+/* Execute a request either directly (if already on Core 0) or via RPC */
+static void session_rpc(session_request_t *req)
+{
+    req->caller = xTaskGetCurrentTaskHandle();
+
+    /* If we are already on Core 0 (or the queue isn't up yet), run inline
+     * to avoid deadlock and to skip the queue overhead. */
+    if (xPortGetCoreID() == 0 || session_queue == NULL) {
+        switch (req->op) {
+            case SESSION_OP_APPEND:
+                *req->result = session_append_impl(req->chat_id, req->role, req->content);
+                break;
+            case SESSION_OP_GET_HISTORY:
+                *req->result = session_get_history_json_impl(req->chat_id, req->buf,
+                                                              req->buf_size, req->max_msgs);
+                break;
+            case SESSION_OP_CLEAR:
+                *req->result = session_clear_impl(req->chat_id);
+                break;
+            case SESSION_OP_LIST:
+                session_list_impl();
+                *req->result = ESP_OK;
+                break;
+        }
+        return;
+    }
+
+    if (xQueueSend(session_queue, req, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "Session queue full");
+        *req->result = ESP_FAIL;
+        return;
+    }
+
+    /* Block until the Core-0 worker finishes the SPIFFS operation */
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+}
+
+/* Core-0 worker: the only task that ever touches SPIFFS session files */
+static void session_worker_task(void *arg)
+{
+    (void)arg;
+    session_request_t req;
+
+    while (1) {
+        if (xQueueReceive(session_queue, &req, portMAX_DELAY) == pdTRUE) {
+            switch (req.op) {
+                case SESSION_OP_APPEND:
+                    *req.result = session_append_impl(req.chat_id, req.role, req.content);
+                    break;
+                case SESSION_OP_GET_HISTORY:
+                    *req.result = session_get_history_json_impl(req.chat_id, req.buf,
+                                                                 req.buf_size, req.max_msgs);
+                    break;
+                case SESSION_OP_CLEAR:
+                    *req.result = session_clear_impl(req.chat_id);
+                    break;
+                case SESSION_OP_LIST:
+                    session_list_impl();
+                    *req.result = ESP_OK;
+                    break;
+            }
+            if (req.caller) {
+                xTaskNotifyGive(req.caller);
+            }
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Public API — thin RPC wrappers                                    */
+/* ------------------------------------------------------------------ */
+
+esp_err_t session_mgr_init(void)
+{
+    if (session_initialized) {
+        return ESP_OK;
+    }
+
+    session_queue = xQueueCreate(4, sizeof(session_request_t));
+    if (!session_queue) {
+        ESP_LOGE(TAG, "Failed to create session queue");
+        return ESP_FAIL;
+    }
+
+    BaseType_t ret = xTaskCreatePinnedToCore(
+        session_worker_task,
+        "session_worker",
+        4096,
+        NULL,
+        5,
+        NULL,
+        0);                     /* Core 0 — the I/O core */
+
+    if (ret != pdPASS) {
+        vQueueDelete(session_queue);
+        session_queue = NULL;
+        return ESP_FAIL;
+    }
+
+    session_initialized = true;
+    ESP_LOGI(TAG, "Session manager initialized at %s", MIMI_SPIFFS_SESSION_DIR);
+    return ESP_OK;
+}
+
+esp_err_t session_append(const char *chat_id, const char *role, const char *content)
+{
+    esp_err_t result;
+    session_request_t req = {
+        .op = SESSION_OP_APPEND,
+        .content = content,
+        .result = &result,
+    };
+    strncpy(req.chat_id, chat_id, sizeof(req.chat_id) - 1);
+    strncpy(req.role, role, sizeof(req.role) - 1);
+    session_rpc(&req);
+    return result;
+}
+
+esp_err_t session_get_history_json(const char *chat_id, char *buf, size_t size, int max_msgs)
+{
+    esp_err_t result;
+    session_request_t req = {
+        .op = SESSION_OP_GET_HISTORY,
+        .buf = buf,
+        .buf_size = size,
+        .max_msgs = max_msgs,
+        .result = &result,
+    };
+    strncpy(req.chat_id, chat_id, sizeof(req.chat_id) - 1);
+    session_rpc(&req);
+    return result;
+}
+
+esp_err_t session_clear(const char *chat_id)
+{
+    esp_err_t result;
+    session_request_t req = {
+        .op = SESSION_OP_CLEAR,
+        .result = &result,
+    };
+    strncpy(req.chat_id, chat_id, sizeof(req.chat_id) - 1);
+    session_rpc(&req);
+    return result;
+}
+
+void session_list(void)
+{
+    esp_err_t result;
+    session_request_t req = {
+        .op = SESSION_OP_LIST,
+        .result = &result,
+    };
+    session_rpc(&req);
+}
+
+/* ------------------------------------------------------------------ */
+/*  SPIFFS-backed implementations (only ever run on Core 0)          */
+/* ------------------------------------------------------------------ */
 
 static void session_path(const char *chat_id, char *buf, size_t size)
 {
     snprintf(buf, size, "%s/tg_%s.jsonl", MIMI_SPIFFS_SESSION_DIR, chat_id);
 }
 
-esp_err_t session_mgr_init(void)
-{
-    ESP_LOGI(TAG, "Session manager initialized at %s", MIMI_SPIFFS_SESSION_DIR);
-    return ESP_OK;
-}
-
-esp_err_t session_append(const char *chat_id, const char *role, const char *content)
+static esp_err_t session_append_impl(const char *chat_id, const char *role, const char *content)
 {
     char path[64];
     session_path(chat_id, path, sizeof(path));
@@ -50,7 +239,7 @@ esp_err_t session_append(const char *chat_id, const char *role, const char *cont
     return ESP_OK;
 }
 
-esp_err_t session_get_history_json(const char *chat_id, char *buf, size_t size, int max_msgs)
+static esp_err_t session_get_history_json_impl(const char *chat_id, char *buf, size_t size, int max_msgs)
 {
     char path[64];
     session_path(chat_id, path, sizeof(path));
@@ -125,7 +314,7 @@ esp_err_t session_get_history_json(const char *chat_id, char *buf, size_t size, 
     return ESP_OK;
 }
 
-esp_err_t session_clear(const char *chat_id)
+static esp_err_t session_clear_impl(const char *chat_id)
 {
     char path[64];
     session_path(chat_id, path, sizeof(path));
@@ -137,7 +326,7 @@ esp_err_t session_clear(const char *chat_id)
     return ESP_ERR_NOT_FOUND;
 }
 
-void session_list(void)
+static void session_list_impl(void)
 {
     DIR *dir = opendir(MIMI_SPIFFS_SESSION_DIR);
     if (!dir) {
