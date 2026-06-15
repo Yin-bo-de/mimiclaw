@@ -274,6 +274,26 @@ The heartbeat service periodically reads `HEARTBEAT.md` from SPIFFS and checks f
 
 This turns MimiClaw into a proactive assistant — write tasks to `HEARTBEAT.md` and the bot will pick them up on the next heartbeat cycle (default: every 30 minutes).
 
+## WebUI Control Panel
+
+MimiClaw includes a lightweight built-in web control panel. From any browser on the same LAN, you can view and control the e-paper display in real time — no Telegram or serial CLI needed.
+
+Open your browser and navigate to:
+
+```
+http://{ESP32_IP}:18789/ui
+```
+
+Features:
+
+- **Live state preview** — automatically fetches current display state (weather, todos, quote) on connect
+- **Edit weather** — update city and weather summary, applied instantly
+- **Manage todos** — dynamically add or remove todo items (up to 5)
+- **Update quote** — change the daily quote text
+- **Refresh screen** — manually trigger an e-paper redraw
+
+The frontend is a zero-dependency Vanilla JS single-page app. It communicates with the firmware over WebSocket and auto-reconnects on disconnect.
+
 ## Also Included
 
 - **WebSocket gateway** on port 18789 — connect from your LAN with any WebSocket client

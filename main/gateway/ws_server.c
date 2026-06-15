@@ -1,6 +1,8 @@
 #include "ws_server.h"
 #include "mimi_config.h"
 #include "bus/message_bus.h"
+#include "gateway/webui_display.h"
+#include "display/display_service.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -67,6 +69,97 @@ static void remove_client(int fd)
     }
 }
 
+static esp_err_t ws_send_json_to_fd(int fd, const char *json_str)
+{
+    if (!s_server) return ESP_ERR_INVALID_STATE;
+    httpd_ws_frame_t ws_pkt = {
+        .type = HTTPD_WS_TYPE_TEXT,
+        .payload = (uint8_t *)json_str,
+        .len = strlen(json_str),
+    };
+    return httpd_ws_send_frame_async(s_server, fd, &ws_pkt);
+}
+
+static void send_display_ack(int fd, const char *action, const char *status, const char *message)
+{
+    cJSON *ack = cJSON_CreateObject();
+    if (!ack) return;
+    cJSON_AddStringToObject(ack, "type", "display_ack");
+    cJSON_AddStringToObject(ack, "action", action);
+    cJSON_AddStringToObject(ack, "status", status);
+    if (message && message[0]) {
+        cJSON_AddStringToObject(ack, "message", message);
+    }
+    char *json = cJSON_PrintUnformatted(ack);
+    cJSON_Delete(ack);
+    if (json) {
+        ws_send_json_to_fd(fd, json);
+        free(json);
+    }
+}
+
+static void handle_display_message(int fd, cJSON *root)
+{
+    cJSON *action = cJSON_GetObjectItem(root, "action");
+    if (!action || !cJSON_IsString(action)) {
+        send_display_ack(fd, "unknown", "error", "missing action");
+        return;
+    }
+    const char *act = action->valuestring;
+    esp_err_t err = ESP_OK;
+
+    if (strcmp(act, "get_state") == 0) {
+        char state_json[1024];
+        err = display_service_get_state_json(state_json, sizeof(state_json));
+        if (err == ESP_OK) {
+            char resp[1280];
+            snprintf(resp, sizeof(resp), "{\"type\":\"display_state\",\"state\":%s}", state_json);
+            ws_send_json_to_fd(fd, resp);
+        } else {
+            send_display_ack(fd, act, "error", esp_err_to_name(err));
+        }
+        return;
+    } else if (strcmp(act, "set_weather") == 0) {
+        cJSON *city = cJSON_GetObjectItem(root, "city");
+        cJSON *summary = cJSON_GetObjectItem(root, "summary");
+        err = display_service_set_weather(cJSON_GetStringValue(city),
+                                          cJSON_GetStringValue(summary), 0);
+    } else if (strcmp(act, "set_todos") == 0) {
+        cJSON *todos = cJSON_GetObjectItem(root, "todos");
+        char todo_storage[MIMI_DISPLAY_MAX_TODOS][MIMI_DISPLAY_TODO_LEN];
+        const char *todo_ptrs[MIMI_DISPLAY_MAX_TODOS];
+        size_t todo_count = 0;
+        if (cJSON_IsArray(todos)) {
+            cJSON *item = NULL;
+            cJSON_ArrayForEach(item, todos) {
+                if (todo_count >= MIMI_DISPLAY_MAX_TODOS) break;
+                const char *val = cJSON_GetStringValue(item);
+                if (val) {
+                    strncpy(todo_storage[todo_count], val, MIMI_DISPLAY_TODO_LEN - 1);
+                    todo_storage[todo_count][MIMI_DISPLAY_TODO_LEN - 1] = '\0';
+                    todo_ptrs[todo_count] = todo_storage[todo_count];
+                    todo_count++;
+                }
+            }
+        }
+        err = display_service_set_todos(todo_ptrs, todo_count, 0);
+    } else if (strcmp(act, "set_quote") == 0) {
+        cJSON *quote = cJSON_GetObjectItem(root, "quote");
+        err = display_service_set_quote(cJSON_GetStringValue(quote), 0);
+    } else if (strcmp(act, "refresh") == 0) {
+        err = display_service_request_refresh();
+    } else {
+        send_display_ack(fd, act, "error", "unknown action");
+        return;
+    }
+
+    if (err == ESP_OK) {
+        send_display_ack(fd, act, "ok", NULL);
+    } else {
+        send_display_ack(fd, act, "error", esp_err_to_name(err));
+    }
+}
+
 static esp_err_t ws_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET) {
@@ -110,29 +203,34 @@ static esp_err_t ws_handler(httpd_req_t *req)
     cJSON *type = cJSON_GetObjectItem(root, "type");
     cJSON *content = cJSON_GetObjectItem(root, "content");
 
-    if (type && cJSON_IsString(type) && strcmp(type->valuestring, "message") == 0
-        && content && cJSON_IsString(content)) {
+    if (type && cJSON_IsString(type)) {
+        if (strcmp(type->valuestring, "message") == 0
+            && content && cJSON_IsString(content)) {
 
-        /* Determine chat_id */
-        const char *chat_id = client ? client->chat_id : "ws_unknown";
-        cJSON *cid = cJSON_GetObjectItem(root, "chat_id");
-        if (cid && cJSON_IsString(cid)) {
-            chat_id = cid->valuestring;
-            /* Update client's chat_id if provided */
-            if (client) {
-                strncpy(client->chat_id, chat_id, sizeof(client->chat_id) - 1);
+            /* Determine chat_id */
+            const char *chat_id = client ? client->chat_id : "ws_unknown";
+            cJSON *cid = cJSON_GetObjectItem(root, "chat_id");
+            if (cid && cJSON_IsString(cid)) {
+                chat_id = cid->valuestring;
+                /* Update client's chat_id if provided */
+                if (client) {
+                    strncpy(client->chat_id, chat_id, sizeof(client->chat_id) - 1);
+                }
             }
-        }
 
-        ESP_LOGI(TAG, "WS message from %s: %.40s...", chat_id, content->valuestring);
+            ESP_LOGI(TAG, "WS message from %s: %.40s...", chat_id, content->valuestring);
 
-        /* Push to inbound bus */
-        mimi_msg_t msg = {0};
-        strncpy(msg.channel, MIMI_CHAN_WEBSOCKET, sizeof(msg.channel) - 1);
-        strncpy(msg.chat_id, chat_id, sizeof(msg.chat_id) - 1);
-        msg.content = strdup(content->valuestring);
-        if (msg.content) {
-            message_bus_push_inbound(&msg);
+            /* Push to inbound bus */
+            mimi_msg_t msg = {0};
+            strncpy(msg.channel, MIMI_CHAN_WEBSOCKET, sizeof(msg.channel) - 1);
+            strncpy(msg.chat_id, chat_id, sizeof(msg.chat_id) - 1);
+            msg.content = strdup(content->valuestring);
+            if (msg.content) {
+                message_bus_push_inbound(&msg);
+            }
+        } else if (strcmp(type->valuestring, "display") == 0) {
+            int fd = httpd_req_to_sockfd(req);
+            handle_display_message(fd, root);
         }
     }
 
@@ -163,6 +261,15 @@ esp_err_t ws_server_start(void)
         .is_websocket = true,
     };
     httpd_register_uri_handler(s_server, &ws_uri);
+
+    /* Register WebUI static page URI */
+    httpd_uri_t ui_uri = {
+        .uri = "/ui",
+        .method = HTTP_GET,
+        .handler = webui_handler,
+        .is_websocket = false,
+    };
+    httpd_register_uri_handler(s_server, &ui_uri);
 
     ESP_LOGI(TAG, "WebSocket server started on port %d", MIMI_WS_PORT);
     return ESP_OK;

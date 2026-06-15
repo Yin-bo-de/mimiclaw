@@ -12,6 +12,7 @@ idf_component_register(
         "memory/memory_store.c"
         "memory/session_mgr.c"
         "gateway/ws_server.c"
+        "gateway/webui_display.c"
         "cli/serial_cli.c"
         "proxy/http_proxy.c"
         "util/utf8.c"
