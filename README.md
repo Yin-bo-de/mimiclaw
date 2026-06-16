@@ -276,7 +276,7 @@ This turns MimiClaw into a proactive assistant — write tasks to `HEARTBEAT.md`
 
 ## WebUI Control Panel
 
-MimiClaw includes a lightweight built-in web control panel. From any browser on the same LAN, you can view and control the e-paper display in real time — no Telegram or serial CLI needed.
+MimiClaw includes a lightweight built-in web control panel. From any browser on the same LAN, you can chat with the AI agent, manage device files, upload images to the e-paper display, and control GPIO pins — no Telegram or serial CLI needed.
 
 Open your browser and navigate to:
 
@@ -286,11 +286,14 @@ http://{ESP32_IP}:18789/ui
 
 Features:
 
-- **Live state preview** — automatically fetches current display state (weather, todos, quote) on connect
-- **Edit weather** — update city and weather summary, applied instantly
-- **Manage todos** — dynamically add or remove todo items (up to 5)
-- **Update quote** — change the daily quote text
-- **Refresh screen** — manually trigger an e-paper redraw
+- **E-Paper Dashboard** — view and control the e-paper display in real time
+  - Live state preview (weather, todos, quote)
+  - Edit weather, manage todos (up to 5), update daily quote
+  - Manually trigger screen refresh
+- **Agent Chat Room** — talk to the AI agent directly in the browser. Messages are pushed to the agent loop via WebSocket and replies appear as chat bubbles. Supports up to 100 messages with auto-scroll.
+- **File Manager** — browse, read, edit, and delete text files on the device's SPIFFS filesystem. Useful for quick edits to `SOUL.md`, `USER.md`, `MEMORY.md`, and other configuration files without re-flashing.
+- **Image Upload** — upload any image from your phone or computer. The browser resizes it to 128×296, applies Floyd-Steinberg dithering to map to the 4 e-paper colors (black/white/yellow/red), packs it into the native 2bpp framebuffer format, and sends it to the display.
+- **GPIO Remote Control** — view and toggle GPIO pin states from a grid panel. Only pins listed in the allowlist can be controlled, and display-reserved pins are blocked for safety.
 
 The frontend is a zero-dependency Vanilla JS single-page app. It communicates with the firmware over WebSocket and auto-reconnects on disconnect.
 

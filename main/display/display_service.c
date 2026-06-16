@@ -909,4 +909,18 @@ bool display_service_is_display_available(void)
     return available;
 }
 
+esp_err_t display_service_show_image_frame(const uint8_t *framebuffer, size_t len)
+{
+    if (!framebuffer) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (len != MIMI_DISPLAY_FB_BYTES) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (!display_service_is_display_available()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return epaper_waveshare_2in9_v2_display_frame(framebuffer, len);
+}
+
 #endif /* MIMI_DISPLAY_SERVICE_WEATHER_PARSE_TEST */

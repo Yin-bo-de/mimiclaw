@@ -93,6 +93,14 @@ esp_err_t display_service_get_state(mimi_display_state_t *state);
 esp_err_t display_service_get_state_json(char *output, size_t output_size);
 
 /**
+ * Render a raw framebuffer directly to the e-paper display.
+ *
+ * This bypasses the dashboard renderer and the display task. The caller is
+ * responsible for supplying a framebuffer of exactly MIMI_DISPLAY_FB_BYTES.
+ */
+esp_err_t display_service_show_image_frame(const uint8_t *framebuffer, size_t len);
+
+/**
  * Return whether the display driver is currently available.
  */
 bool display_service_is_display_available(void);

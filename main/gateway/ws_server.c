@@ -3,12 +3,19 @@
 #include "bus/message_bus.h"
 #include "gateway/webui_display.h"
 #include "display/display_service.h"
+#include "tools/gpio_policy.h"
+#include "tools/tool_files.h"
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "cJSON.h"
+#include "driver/gpio.h"
+#include "mbedtls/base64.h"
 
 static const char *TAG = "ws";
 
@@ -98,6 +105,253 @@ static void send_display_ack(int fd, const char *action, const char *status, con
     }
 }
 
+/* ── Path validation (copied from tool_files.c) ─────────────────────────── */
+
+static bool validate_path(const char *path)
+{
+    if (!path) return false;
+    size_t base_len = strlen(MIMI_SPIFFS_BASE);
+    if (strncmp(path, MIMI_SPIFFS_BASE, base_len) != 0) return false;
+    if (base_len > 0 && MIMI_SPIFFS_BASE[base_len - 1] != '/') {
+        if (path[base_len] != '/') return false;
+    }
+    if (strstr(path, "..") != NULL) return false;
+    return true;
+}
+
+/* ── File message handler ──────────────────────────────────────────────── */
+
+static void send_file_ack(int fd, const char *action, const char *status,
+                          cJSON *files_arr, const char *content, const char *message)
+{
+    cJSON *ack = cJSON_CreateObject();
+    if (!ack) return;
+    cJSON_AddStringToObject(ack, "type", "file_ack");
+    cJSON_AddStringToObject(ack, "action", action);
+    cJSON_AddStringToObject(ack, "status", status);
+    if (files_arr) {
+        cJSON_AddItemToObject(ack, "files", files_arr);
+    }
+    if (content) {
+        cJSON_AddStringToObject(ack, "content", content);
+    }
+    if (message && message[0]) {
+        cJSON_AddStringToObject(ack, "message", message);
+    }
+    char *json = cJSON_PrintUnformatted(ack);
+    cJSON_Delete(ack);
+    if (json) {
+        ws_send_json_to_fd(fd, json);
+        free(json);
+    }
+}
+
+static void handle_file_message(int fd, cJSON *root)
+{
+    cJSON *action = cJSON_GetObjectItem(root, "action");
+    if (!action || !cJSON_IsString(action)) {
+        send_file_ack(fd, "unknown", "error", NULL, NULL, "missing action");
+        return;
+    }
+    const char *act = action->valuestring;
+
+    if (strcmp(act, "list") == 0) {
+        DIR *dir = opendir(MIMI_SPIFFS_BASE);
+        if (!dir) {
+            send_file_ack(fd, act, "error", NULL, NULL, "cannot open directory");
+            return;
+        }
+        cJSON *files = cJSON_CreateArray();
+        if (!files) {
+            closedir(dir);
+            send_file_ack(fd, act, "error", NULL, NULL, "out of memory");
+            return;
+        }
+        struct dirent *ent;
+        while ((ent = readdir(dir)) != NULL) {
+            char full_path[512];
+            snprintf(full_path, sizeof(full_path), "%s/%s", MIMI_SPIFFS_BASE, ent->d_name);
+            cJSON_AddItemToArray(files, cJSON_CreateString(full_path));
+        }
+        closedir(dir);
+        send_file_ack(fd, act, "ok", files, NULL, NULL);
+        return;
+    }
+
+    cJSON *path_item = cJSON_GetObjectItem(root, "path");
+    const char *path = cJSON_GetStringValue(path_item);
+    if (!validate_path(path)) {
+        send_file_ack(fd, act, "error", NULL, NULL, "invalid path");
+        return;
+    }
+
+    if (strcmp(act, "read") == 0) {
+        FILE *f = fopen(path, "r");
+        if (!f) {
+            send_file_ack(fd, act, "error", NULL, NULL, "file not found");
+            return;
+        }
+        char *buf = malloc((32 * 1024) + 1);
+        if (!buf) {
+            fclose(f);
+            send_file_ack(fd, act, "error", NULL, NULL, "out of memory");
+            return;
+        }
+        size_t n = fread(buf, 1, 32 * 1024, f);
+        buf[n] = '\0';
+        fclose(f);
+        send_file_ack(fd, act, "ok", NULL, buf, NULL);
+        free(buf);
+        return;
+    }
+
+    if (strcmp(act, "write") == 0) {
+        cJSON *content_item = cJSON_GetObjectItem(root, "content");
+        const char *content = cJSON_GetStringValue(content_item);
+        if (!content) {
+            send_file_ack(fd, act, "error", NULL, NULL, "missing content");
+            return;
+        }
+        cJSON *input = cJSON_CreateObject();
+        cJSON_AddStringToObject(input, "path", path);
+        cJSON_AddStringToObject(input, "content", content);
+        char *input_json = cJSON_PrintUnformatted(input);
+        cJSON_Delete(input);
+        if (!input_json) {
+            send_file_ack(fd, act, "error", NULL, NULL, "out of memory");
+            return;
+        }
+        char tool_output[256];
+        esp_err_t err = tool_write_file_execute(input_json, tool_output, sizeof(tool_output));
+        free(input_json);
+        if (err == ESP_OK) {
+            send_file_ack(fd, act, "ok", NULL, NULL, NULL);
+        } else {
+            send_file_ack(fd, act, "error", NULL, NULL, tool_output);
+        }
+        return;
+    }
+
+    if (strcmp(act, "delete") == 0) {
+        if (remove(path) == 0) {
+            send_file_ack(fd, act, "ok", NULL, NULL, NULL);
+        } else {
+            send_file_ack(fd, act, "error", NULL, NULL, "remove failed");
+        }
+        return;
+    }
+
+    send_file_ack(fd, act, "error", NULL, NULL, "unknown action");
+}
+
+/* ── GPIO message handler ──────────────────────────────────────────────── */
+
+static void send_gpio_ack(int fd, const char *action, const char *status,
+                          int pin, int state, cJSON *pins_arr, const char *message)
+{
+    cJSON *ack = cJSON_CreateObject();
+    if (!ack) return;
+    cJSON_AddStringToObject(ack, "type", "gpio_ack");
+    cJSON_AddStringToObject(ack, "action", action);
+    cJSON_AddStringToObject(ack, "status", status);
+    if (pin >= 0) {
+        cJSON_AddNumberToObject(ack, "pin", pin);
+    }
+    if (state >= 0) {
+        cJSON_AddNumberToObject(ack, "state", state);
+    }
+    if (pins_arr) {
+        cJSON_AddItemToObject(ack, "pins", pins_arr);
+    }
+    if (message && message[0]) {
+        cJSON_AddStringToObject(ack, "message", message);
+    }
+    char *json = cJSON_PrintUnformatted(ack);
+    cJSON_Delete(ack);
+    if (json) {
+        ws_send_json_to_fd(fd, json);
+        free(json);
+    }
+}
+
+static void handle_gpio_message(int fd, cJSON *root)
+{
+    cJSON *action = cJSON_GetObjectItem(root, "action");
+    if (!action || !cJSON_IsString(action)) {
+        send_gpio_ack(fd, "unknown", "error", -1, -1, NULL, "missing action");
+        return;
+    }
+    const char *act = action->valuestring;
+
+    if (strcmp(act, "read_all") == 0) {
+        cJSON *pins = cJSON_CreateArray();
+        if (!pins) {
+            send_gpio_ack(fd, act, "error", -1, -1, NULL, "out of memory");
+            return;
+        }
+        char csv_buf[64];
+        strncpy(csv_buf, MIMI_GPIO_ALLOWED_CSV, sizeof(csv_buf) - 1);
+        csv_buf[sizeof(csv_buf) - 1] = '\0';
+        char *saveptr = NULL;
+        char *token = strtok_r(csv_buf, ",", &saveptr);
+        while (token) {
+            int pin = (int)strtol(token, NULL, 10);
+            if (gpio_policy_pin_is_allowed(pin)) {
+                gpio_set_direction((gpio_num_t)pin, GPIO_MODE_INPUT);
+                int level = gpio_get_level((gpio_num_t)pin);
+                cJSON *item = cJSON_CreateObject();
+                cJSON_AddNumberToObject(item, "pin", pin);
+                cJSON_AddNumberToObject(item, "state", level);
+                cJSON_AddItemToArray(pins, item);
+            }
+            token = strtok_r(NULL, ",", &saveptr);
+        }
+        send_gpio_ack(fd, act, "ok", -1, -1, pins, NULL);
+        return;
+    }
+
+    cJSON *pin_item = cJSON_GetObjectItem(root, "pin");
+    if (!pin_item || !cJSON_IsNumber(pin_item)) {
+        send_gpio_ack(fd, act, "error", -1, -1, NULL, "missing pin");
+        return;
+    }
+    int pin = (int)pin_item->valuedouble;
+
+    if (!gpio_policy_pin_is_allowed(pin)) {
+        char hint[128];
+        if (gpio_policy_pin_forbidden_hint(pin, hint, sizeof(hint))) {
+            send_gpio_ack(fd, act, "error", pin, -1, NULL, hint);
+        } else {
+            send_gpio_ack(fd, act, "error", pin, -1, NULL, "pin not allowed");
+        }
+        return;
+    }
+
+    if (strcmp(act, "read") == 0) {
+        gpio_set_direction((gpio_num_t)pin, GPIO_MODE_INPUT);
+        int level = gpio_get_level((gpio_num_t)pin);
+        send_gpio_ack(fd, act, "ok", pin, level, NULL, NULL);
+        return;
+    }
+
+    if (strcmp(act, "write") == 0) {
+        cJSON *state_item = cJSON_GetObjectItem(root, "state");
+        if (!state_item || !cJSON_IsNumber(state_item)) {
+            send_gpio_ack(fd, act, "error", pin, -1, NULL, "missing state");
+            return;
+        }
+        int level = (int)state_item->valuedouble;
+        gpio_set_direction((gpio_num_t)pin, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)pin, level);
+        send_gpio_ack(fd, act, "ok", pin, level, NULL, NULL);
+        return;
+    }
+
+    send_gpio_ack(fd, act, "error", pin, -1, NULL, "unknown action");
+}
+
+/* ── Display message handler ───────────────────────────────────────────── */
+
 static void handle_display_message(int fd, cJSON *root)
 {
     cJSON *action = cJSON_GetObjectItem(root, "action");
@@ -148,6 +402,36 @@ static void handle_display_message(int fd, cJSON *root)
         err = display_service_set_quote(cJSON_GetStringValue(quote), 0);
     } else if (strcmp(act, "refresh") == 0) {
         err = display_service_request_refresh();
+    } else if (strcmp(act, "show_image") == 0) {
+        cJSON *b64_item = cJSON_GetObjectItem(root, "image_b64");
+        const char *b64_str = cJSON_GetStringValue(b64_item);
+        if (!b64_str) {
+            send_display_ack(fd, act, "error", "missing image_b64");
+            return;
+        }
+        size_t b64_len = strlen(b64_str);
+        size_t expected_decoded = MIMI_DISPLAY_FB_BYTES;
+        uint8_t *fb = malloc(expected_decoded);
+        if (!fb) {
+            send_display_ack(fd, act, "error", "out of memory");
+            return;
+        }
+        size_t olen = 0;
+        int ret = mbedtls_base64_decode(fb, expected_decoded, &olen,
+                                        (const unsigned char *)b64_str, b64_len);
+        if (ret != 0 || olen != expected_decoded) {
+            free(fb);
+            send_display_ack(fd, act, "error", "invalid image data");
+            return;
+        }
+        err = display_service_show_image_frame(fb, olen);
+        free(fb);
+        if (err == ESP_OK) {
+            send_display_ack(fd, act, "ok", NULL);
+        } else {
+            send_display_ack(fd, act, "error", esp_err_to_name(err));
+        }
+        return;
     } else {
         send_display_ack(fd, act, "error", "unknown action");
         return;
@@ -231,6 +515,12 @@ static esp_err_t ws_handler(httpd_req_t *req)
         } else if (strcmp(type->valuestring, "display") == 0) {
             int fd = httpd_req_to_sockfd(req);
             handle_display_message(fd, root);
+        } else if (strcmp(type->valuestring, "file") == 0) {
+            int fd = httpd_req_to_sockfd(req);
+            handle_file_message(fd, root);
+        } else if (strcmp(type->valuestring, "gpio") == 0) {
+            int fd = httpd_req_to_sockfd(req);
+            handle_gpio_message(fd, root);
         }
     }
 
