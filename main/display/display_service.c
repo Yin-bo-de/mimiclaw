@@ -134,6 +134,7 @@ typedef struct {
 
 static mimi_display_state_t s_state;
 static SemaphoreHandle_t s_state_mutex;
+static SemaphoreHandle_t s_driver_mutex;
 static EventGroupHandle_t s_display_events;
 static TaskHandle_t s_display_task;
 static bool s_initialized;
@@ -223,6 +224,21 @@ static void unlock_state(void)
 {
     if (s_state_mutex) {
         xSemaphoreGive(s_state_mutex);
+    }
+}
+
+static esp_err_t lock_driver(void)
+{
+    if (!s_driver_mutex) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return xSemaphoreTake(s_driver_mutex, pdMS_TO_TICKS(5000)) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+static void unlock_driver(void)
+{
+    if (s_driver_mutex) {
+        xSemaphoreGive(s_driver_mutex);
     }
 }
 
@@ -451,7 +467,13 @@ static esp_err_t render_dashboard_regions(uint32_t dirty_regions)
     if (render_err != ESP_OK) {
         return render_err;
     }
-    return epaper_waveshare_2in9_v2_display_frame(s_framebuffer, sizeof(s_framebuffer));
+    esp_err_t lock_err = lock_driver();
+    if (lock_err != ESP_OK) {
+        return lock_err;
+    }
+    esp_err_t flush_err = epaper_waveshare_2in9_v2_display_frame(s_framebuffer, sizeof(s_framebuffer));
+    unlock_driver();
+    return flush_err;
 #else
     return ESP_ERR_NOT_SUPPORTED;
 #endif
@@ -544,8 +566,9 @@ esp_err_t display_service_init(void)
 
     memset(&s_state, 0, sizeof(s_state));
     s_state_mutex = xSemaphoreCreateMutex();
+    s_driver_mutex = xSemaphoreCreateMutex();
     s_display_events = xEventGroupCreate();
-    if (!s_state_mutex || !s_display_events) {
+    if (!s_state_mutex || !s_driver_mutex || !s_display_events) {
         ESP_LOGE(TAG, "failed to create display service synchronization primitives");
         return ESP_ERR_NO_MEM;
     }
@@ -920,7 +943,13 @@ esp_err_t display_service_show_image_frame(const uint8_t *framebuffer, size_t le
     if (!display_service_is_display_available()) {
         return ESP_ERR_INVALID_STATE;
     }
-    return epaper_waveshare_2in9_v2_display_frame(framebuffer, len);
+    esp_err_t lock_err = lock_driver();
+    if (lock_err != ESP_OK) {
+        return lock_err;
+    }
+    esp_err_t err = epaper_waveshare_2in9_v2_display_frame(framebuffer, len);
+    unlock_driver();
+    return err;
 }
 
 #endif /* MIMI_DISPLAY_SERVICE_WEATHER_PARSE_TEST */

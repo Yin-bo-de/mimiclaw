@@ -171,7 +171,10 @@ static void handle_file_message(int fd, cJSON *root)
         while ((ent = readdir(dir)) != NULL) {
             char full_path[512];
             snprintf(full_path, sizeof(full_path), "%s/%s", MIMI_SPIFFS_BASE, ent->d_name);
-            cJSON_AddItemToArray(files, cJSON_CreateString(full_path));
+            cJSON *path_str = cJSON_CreateString(full_path);
+            if (path_str) {
+                cJSON_AddItemToArray(files, path_str);
+            }
         }
         closedir(dir);
         send_file_ack(fd, act, "ok", files, NULL, NULL);
@@ -289,7 +292,7 @@ static void handle_gpio_message(int fd, cJSON *root)
             send_gpio_ack(fd, act, "error", -1, -1, NULL, "out of memory");
             return;
         }
-        char csv_buf[64];
+        char csv_buf[256];
         strncpy(csv_buf, MIMI_GPIO_ALLOWED_CSV, sizeof(csv_buf) - 1);
         csv_buf[sizeof(csv_buf) - 1] = '\0';
         char *saveptr = NULL;
