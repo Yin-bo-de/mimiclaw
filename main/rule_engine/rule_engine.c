@@ -26,6 +26,7 @@ static rule_t s_rules[MAX_RULES];
 static int s_rule_count = 0;
 static TaskHandle_t s_rule_task = NULL;
 static volatile bool s_running = false;
+static SemaphoreHandle_t s_rules_mutex = NULL;
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 
@@ -340,9 +341,12 @@ static void rule_engine_task(void *arg)
     ESP_LOGI(TAG, "Rule engine task started");
 
     while (s_running) {
-        for (int i = 0; i < s_rule_count; i++) {
+        if (s_rules_mutex) xSemaphoreTake(s_rules_mutex, portMAX_DELAY);
+        int count = s_rule_count;
+        for (int i = 0; i < count; i++) {
             evaluate_rule(&s_rules[i]);
         }
+        if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
         vTaskDelay(pdMS_TO_TICKS(1000)); /* 1-second polling loop */
     }
 
@@ -550,7 +554,7 @@ static esp_err_t rule_load(void)
     return ESP_OK;
 }
 
-esp_err_t rule_engine_save(void)
+static esp_err_t rule_engine_save_unlocked(void)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON *arr = cJSON_CreateArray();
@@ -645,12 +649,27 @@ esp_err_t rule_engine_save(void)
     return ESP_OK;
 }
 
+esp_err_t rule_engine_save(void)
+{
+    if (s_rules_mutex) xSemaphoreTake(s_rules_mutex, portMAX_DELAY);
+    esp_err_t err = rule_engine_save_unlocked();
+    if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
+    return err;
+}
+
 /* ── Public API ───────────────────────────────────────────────── */
 
 esp_err_t rule_engine_init(void)
 {
     s_rule_count = 0;
     s_running = false;
+    if (!s_rules_mutex) {
+        s_rules_mutex = xSemaphoreCreateMutex();
+        if (!s_rules_mutex) {
+            ESP_LOGE(TAG, "Failed to create rules mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
     return rule_load();
 }
 
@@ -690,7 +709,10 @@ void rule_engine_stop(void)
 
 esp_err_t rule_engine_add(const rule_t *rule)
 {
+    if (s_rules_mutex) xSemaphoreTake(s_rules_mutex, portMAX_DELAY);
+
     if (s_rule_count >= MAX_RULES) {
+        if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
         ESP_LOGW(TAG, "Max rules reached (%d)", MAX_RULES);
         return ESP_ERR_NO_MEM;
     }
@@ -707,13 +729,17 @@ esp_err_t rule_engine_add(const rule_t *rule)
     s_rules[s_rule_count] = copy;
     s_rule_count++;
 
-    rule_engine_save();
+    rule_engine_save_unlocked();
+    if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
+
     ESP_LOGI(TAG, "Added rule '%s' (%s)", copy.name, copy.id);
     return ESP_OK;
 }
 
 esp_err_t rule_engine_remove(const char *rule_id)
 {
+    if (s_rules_mutex) xSemaphoreTake(s_rules_mutex, portMAX_DELAY);
+
     for (int i = 0; i < s_rule_count; i++) {
         if (strcmp(s_rules[i].id, rule_id) == 0) {
             ESP_LOGI(TAG, "Removing rule '%s' (%s)", s_rules[i].name, rule_id);
@@ -721,39 +747,54 @@ esp_err_t rule_engine_remove(const char *rule_id)
                 s_rules[j] = s_rules[j + 1];
             }
             s_rule_count--;
-            rule_engine_save();
+            rule_engine_save_unlocked();
+            if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
             return ESP_OK;
         }
     }
+
+    if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
     return ESP_ERR_NOT_FOUND;
 }
 
 esp_err_t rule_engine_enable(const char *rule_id)
 {
+    if (s_rules_mutex) xSemaphoreTake(s_rules_mutex, portMAX_DELAY);
+
     for (int i = 0; i < s_rule_count; i++) {
         if (strcmp(s_rules[i].id, rule_id) == 0) {
             s_rules[i].enabled = true;
-            rule_engine_save();
+            rule_engine_save_unlocked();
+            if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
             return ESP_OK;
         }
     }
+
+    if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
     return ESP_ERR_NOT_FOUND;
 }
 
 esp_err_t rule_engine_disable(const char *rule_id)
 {
+    if (s_rules_mutex) xSemaphoreTake(s_rules_mutex, portMAX_DELAY);
+
     for (int i = 0; i < s_rule_count; i++) {
         if (strcmp(s_rules[i].id, rule_id) == 0) {
             s_rules[i].enabled = false;
-            rule_engine_save();
+            rule_engine_save_unlocked();
+            if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
             return ESP_OK;
         }
     }
+
+    if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
     return ESP_ERR_NOT_FOUND;
 }
 
 void rule_engine_list(const rule_t **rules, int *count)
 {
+    if (s_rules_mutex) xSemaphoreTake(s_rules_mutex, portMAX_DELAY);
     *rules = s_rules;
     *count = s_rule_count;
+    if (s_rules_mutex) xSemaphoreGive(s_rules_mutex);
 }

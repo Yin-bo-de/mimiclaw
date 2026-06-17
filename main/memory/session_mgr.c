@@ -151,8 +151,22 @@ esp_err_t session_mgr_init(void)
     return ESP_OK;
 }
 
+static bool session_chat_id_is_valid(const char *chat_id)
+{
+    if (!chat_id || chat_id[0] == '\0') return false;
+    for (const char *p = chat_id; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '/' || c == '\\' || c == '.') return false;
+    }
+    return true;
+}
+
 esp_err_t session_append(const char *chat_id, const char *role, const char *content)
 {
+    if (!session_chat_id_is_valid(chat_id)) {
+        ESP_LOGE(TAG, "Invalid chat_id for append");
+        return ESP_ERR_INVALID_ARG;
+    }
     esp_err_t result;
     session_request_t req = {
         .op = SESSION_OP_APPEND,
@@ -160,13 +174,19 @@ esp_err_t session_append(const char *chat_id, const char *role, const char *cont
         .result = &result,
     };
     strncpy(req.chat_id, chat_id, sizeof(req.chat_id) - 1);
+    req.chat_id[sizeof(req.chat_id) - 1] = '\0';
     strncpy(req.role, role, sizeof(req.role) - 1);
+    req.role[sizeof(req.role) - 1] = '\0';
     session_rpc(&req);
     return result;
 }
 
 esp_err_t session_get_history_json(const char *chat_id, char *buf, size_t size, int max_msgs)
 {
+    if (!session_chat_id_is_valid(chat_id)) {
+        ESP_LOGE(TAG, "Invalid chat_id for get_history");
+        return ESP_ERR_INVALID_ARG;
+    }
     esp_err_t result;
     session_request_t req = {
         .op = SESSION_OP_GET_HISTORY,
@@ -176,18 +196,24 @@ esp_err_t session_get_history_json(const char *chat_id, char *buf, size_t size, 
         .result = &result,
     };
     strncpy(req.chat_id, chat_id, sizeof(req.chat_id) - 1);
+    req.chat_id[sizeof(req.chat_id) - 1] = '\0';
     session_rpc(&req);
     return result;
 }
 
 esp_err_t session_clear(const char *chat_id)
 {
+    if (!session_chat_id_is_valid(chat_id)) {
+        ESP_LOGE(TAG, "Invalid chat_id for clear");
+        return ESP_ERR_INVALID_ARG;
+    }
     esp_err_t result;
     session_request_t req = {
         .op = SESSION_OP_CLEAR,
         .result = &result,
     };
     strncpy(req.chat_id, chat_id, sizeof(req.chat_id) - 1);
+    req.chat_id[sizeof(req.chat_id) - 1] = '\0';
     session_rpc(&req);
     return result;
 }

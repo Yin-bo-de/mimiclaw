@@ -51,6 +51,13 @@ static double  s_goal_lon  = 0.0;
 static char    s_goal_name[64] = {0};
 static int64_t s_trip_start_us = 0; /* set when trip begins, used by ARRIVED escalate */
 
+/* Goal mutation protection: nav_l2_start() may run on a different core / context */
+static portMUX_TYPE s_goal_mux = portMUX_INITIALIZER_UNLOCKED;
+
+/* PID state — must be reset on new goal to avoid windup from previous trip */
+static float  s_heading_integral   = 0.0f;
+static double s_prev_heading_error = 0.0;
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -203,10 +210,17 @@ static void fsm_cruise(const nav_situation_t *sit, const nav_config_t *cfg)
         last_logged_state = s_state;
     }
 
+    /* Snapshot goal atomically */
+    double goal_lat, goal_lon;
+    portENTER_CRITICAL(&s_goal_mux);
+    goal_lat = s_goal_lat;
+    goal_lon = s_goal_lon;
+    portEXIT_CRITICAL(&s_goal_mux);
+
     /* Check arrival */
     if (sit->gps_fix && sit->has_goal) {
         double dist = nav_planner_distance_m(sit->lat, sit->lon,
-                                              s_goal_lat, s_goal_lon);
+                                              goal_lat, goal_lon);
         if (dist <= (double)cfg->arrival_radius_m) {
             int64_t duration_s = (esp_timer_get_time() - s_trip_start_us) / 1000000LL;
             nav_escalate_arrived(sit, duration_s, dist, s_avoid_count);
@@ -223,12 +237,10 @@ static void fsm_cruise(const nav_situation_t *sit, const nav_config_t *cfg)
     int steer = 0;
     if (sit->gps_fix && sit->has_goal) {
         double bearing = nav_planner_bearing_deg(sit->lat, sit->lon,
-                                                  s_goal_lat, s_goal_lon);
+                                                  goal_lat, goal_lon);
         double herr = nav_planner_heading_error_deg(sit->yaw_deg, bearing);
 
         /* Integral term with anti-windup */
-        static float s_heading_integral = 0.0f;
-        static double s_prev_heading_error = 0.0f;
         float dt_s = (float)cfg->l2_tick_ms / 1000.0f;
         s_heading_integral += (float)herr * dt_s;
         s_heading_integral = clamp_float(s_heading_integral, -50.0f, 50.0f);
@@ -250,7 +262,7 @@ static void fsm_cruise(const nav_situation_t *sit, const nav_config_t *cfg)
     int min_d = min_valid_distance(sit);
     if (min_d < cfg->avoid_trigger_cm) {
         double bearing = sit->gps_fix && sit->has_goal
-            ? nav_planner_bearing_deg(sit->lat, sit->lon, s_goal_lat, s_goal_lon)
+            ? nav_planner_bearing_deg(sit->lat, sit->lon, goal_lat, goal_lon)
             : sit->yaw_deg;  /* fallback: current heading */
         int side = score_sides(sit, bearing);
         nav_memory_record_attempt(sit->lat, sit->lon, side, sit->distances_cm[1]);
@@ -426,6 +438,8 @@ static void l2_task(void *arg)
             case L2_CMD_NEW_GOAL:
                 s_avoid_count  = 0;
                 s_replan_count = 0;
+                s_heading_integral   = 0.0f;
+                s_prev_heading_error = 0.0;
                 enter_state(L2_CRUISE);
                 break;
             default:
@@ -441,8 +455,9 @@ static void l2_task(void *arg)
                 int64_t now = esp_timer_get_time();
                 ESP_LOGE(TAG, "Sensor stale → enter FAULT");
                 for (int i = 0; i < 3; i++) {
-                    int64_t age_ms = (now - sit.distance_ts_us[i]) / 1000LL;
-                    if (!sit.distance_valid[i] || (now - sit.distance_ts_us[i]) >= SENSOR_STALE_US) {
+                    int64_t age_us = now - sit.distance_ts_us[i];
+                    int64_t age_ms = age_us / 1000LL;
+                    if (!sit.distance_valid[i] || age_us >= SENSOR_STALE_US) {
                         ESP_LOGE(TAG, "  ultrasonic[%d/%s] valid=%d age=%lldms last=%dcm",
                                  i,
                                  (i == 0 ? "left" : (i == 1 ? "front" : "right")),
@@ -495,7 +510,12 @@ static void l2_task(void *arg)
             s_state == L2_REPLAN) {
             int avoid_side = (s_state == L2_AVOID_LEFT)  ? 0 :
                              (s_state == L2_AVOID_RIGHT) ? 1 : -1;
-            nav_escalate_run_periodic(&sit, avoid_side, s_goal_lat, s_goal_lon);
+            double goal_lat, goal_lon;
+            portENTER_CRITICAL(&s_goal_mux);
+            goal_lat = s_goal_lat;
+            goal_lon = s_goal_lon;
+            portEXIT_CRITICAL(&s_goal_mux);
+            nav_escalate_run_periodic(&sit, avoid_side, goal_lat, goal_lon);
         }
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(MIMI_NAV_L2_PERIOD_MS));
@@ -532,12 +552,19 @@ esp_err_t nav_l2_start(double goal_lat, double goal_lon, const char *goal_name, 
         return ESP_ERR_INVALID_ARG;
     }
 
+    portENTER_CRITICAL(&s_goal_mux);
     s_goal_lat      = goal_lat;
     s_goal_lon      = goal_lon;
     s_cruise_speed  = speed_pct;
     s_trip_start_us = esp_timer_get_time();
+    portEXIT_CRITICAL(&s_goal_mux);
+
     strncpy(s_goal_name, goal_name ? goal_name : "", sizeof(s_goal_name) - 1);
     s_goal_name[sizeof(s_goal_name) - 1] = '\0';
+
+    /* Reset PID windup for fresh goal */
+    s_heading_integral   = 0.0f;
+    s_prev_heading_error = 0.0;
 
     if (s_task_alive) {
         /* Signal running task to reset to CRUISE with new goal */

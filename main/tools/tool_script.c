@@ -192,9 +192,14 @@ esp_err_t tool_script_run_execute(const char *input_json, char *output, size_t o
         snprintf(output, output_size, "Error: out of memory");
         return ESP_ERR_NO_MEM;
     }
-    fread(buf, 1, fsize, f);
-    buf[fsize] = '\0';
+    size_t nread = fread(buf, 1, fsize, f);
+    buf[nread] = '\0';
     fclose(f);
+    if (nread != (size_t)fsize) {
+        free(buf);
+        snprintf(output, output_size, "Error: failed to read script file");
+        return ESP_FAIL;
+    }
 
     cJSON *script = cJSON_Parse(buf);
     free(buf);

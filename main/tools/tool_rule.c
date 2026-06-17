@@ -70,9 +70,15 @@ static bool parse_actions(cJSON *arr, rule_action_entry_t *out, int *out_count)
         cJSON *val_j = cJSON_GetObjectItem(a, "value");
         out[i].value = (val_j && cJSON_IsNumber(val_j)) ? val_j->valueint : 0;
         const char *sn = cJSON_GetStringValue(cJSON_GetObjectItem(a, "script_name"));
-        if (sn) strncpy(out[i].script_name, sn, sizeof(out[i].script_name) - 1);
+        if (sn) {
+            strncpy(out[i].script_name, sn, sizeof(out[i].script_name) - 1);
+            out[i].script_name[sizeof(out[i].script_name) - 1] = '\0';
+        }
         const char *em = cJSON_GetStringValue(cJSON_GetObjectItem(a, "escalate_msg"));
-        if (em) strncpy(out[i].escalate_msg, em, sizeof(out[i].escalate_msg) - 1);
+        if (em) {
+            strncpy(out[i].escalate_msg, em, sizeof(out[i].escalate_msg) - 1);
+            out[i].escalate_msg[sizeof(out[i].escalate_msg) - 1] = '\0';
+        }
     }
 
     *out_count = n;

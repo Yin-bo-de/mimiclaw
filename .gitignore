@@ -59,3 +59,4 @@ nanobot/
 Thumbs.db
 references/
 .venv/
+.worktrees/

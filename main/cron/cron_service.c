@@ -19,6 +19,7 @@ static const char *TAG = "cron";
 static cron_job_t s_jobs[MAX_CRON_JOBS];
 static int s_job_count = 0;
 static TaskHandle_t s_cron_task = NULL;
+static SemaphoreHandle_t s_jobs_mutex = NULL;
 
 static esp_err_t cron_save_jobs(void);
 
@@ -174,7 +175,7 @@ static esp_err_t cron_load_jobs(void)
     return ESP_OK;
 }
 
-static esp_err_t cron_save_jobs(void)
+static esp_err_t cron_save_jobs_unlocked(void)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON *jobs_arr = cJSON_CreateArray();
@@ -236,13 +237,22 @@ static esp_err_t cron_save_jobs(void)
     return ESP_OK;
 }
 
+static esp_err_t cron_save_jobs(void)
+{
+    if (s_jobs_mutex) xSemaphoreTake(s_jobs_mutex, portMAX_DELAY);
+    esp_err_t err = cron_save_jobs_unlocked();
+    if (s_jobs_mutex) xSemaphoreGive(s_jobs_mutex);
+    return err;
+}
+
 /* ── Due-job processing ───────────────────────────────────────── */
 
 static void cron_process_due_jobs(void)
 {
     time_t now = time(NULL);
-
     bool changed = false;
+
+    if (s_jobs_mutex) xSemaphoreTake(s_jobs_mutex, portMAX_DELAY);
 
     for (int i = 0; i < s_job_count; i++) {
         cron_job_t *job = &s_jobs[i];
@@ -294,8 +304,10 @@ static void cron_process_due_jobs(void)
     }
 
     if (changed) {
-        cron_save_jobs();
+        cron_save_jobs_unlocked();
     }
+
+    if (s_jobs_mutex) xSemaphoreGive(s_jobs_mutex);
 }
 
 static void cron_task_main(void *arg)
@@ -331,6 +343,13 @@ static void compute_initial_next_run(cron_job_t *job)
 
 esp_err_t cron_service_init(void)
 {
+    if (!s_jobs_mutex) {
+        s_jobs_mutex = xSemaphoreCreateMutex();
+        if (!s_jobs_mutex) {
+            ESP_LOGE(TAG, "Failed to create cron jobs mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
     return cron_load_jobs();
 }
 
@@ -383,7 +402,10 @@ void cron_service_stop(void)
 
 esp_err_t cron_add_job(cron_job_t *job)
 {
+    if (s_jobs_mutex) xSemaphoreTake(s_jobs_mutex, portMAX_DELAY);
+
     if (s_job_count >= MAX_CRON_JOBS) {
+        if (s_jobs_mutex) xSemaphoreGive(s_jobs_mutex);
         ESP_LOGW(TAG, "Max cron jobs reached (%d)", MAX_CRON_JOBS);
         return ESP_ERR_NO_MEM;
     }
@@ -403,7 +425,8 @@ esp_err_t cron_add_job(cron_job_t *job)
     s_jobs[s_job_count] = *job;
     s_job_count++;
 
-    cron_save_jobs();
+    cron_save_jobs_unlocked();
+    if (s_jobs_mutex) xSemaphoreGive(s_jobs_mutex);
 
     ESP_LOGI(TAG, "Added cron job: %s (%s) kind=%s next_run=%lld",
              job->name, job->id,
@@ -414,6 +437,8 @@ esp_err_t cron_add_job(cron_job_t *job)
 
 esp_err_t cron_remove_job(const char *job_id)
 {
+    if (s_jobs_mutex) xSemaphoreTake(s_jobs_mutex, portMAX_DELAY);
+
     for (int i = 0; i < s_job_count; i++) {
         if (strcmp(s_jobs[i].id, job_id) == 0) {
             ESP_LOGI(TAG, "Removing cron job: %s (%s)", s_jobs[i].name, job_id);
@@ -424,17 +449,21 @@ esp_err_t cron_remove_job(const char *job_id)
             }
             s_job_count--;
 
-            cron_save_jobs();
+            cron_save_jobs_unlocked();
+            if (s_jobs_mutex) xSemaphoreGive(s_jobs_mutex);
             return ESP_OK;
         }
     }
 
+    if (s_jobs_mutex) xSemaphoreGive(s_jobs_mutex);
     ESP_LOGW(TAG, "Cron job not found: %s", job_id);
     return ESP_ERR_NOT_FOUND;
 }
 
 void cron_list_jobs(const cron_job_t **jobs, int *count)
 {
+    if (s_jobs_mutex) xSemaphoreTake(s_jobs_mutex, portMAX_DELAY);
     *jobs = s_jobs;
     *count = s_job_count;
+    if (s_jobs_mutex) xSemaphoreGive(s_jobs_mutex);
 }

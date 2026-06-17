@@ -228,3 +228,9 @@
 #define MIMI_NAV_PARAMS_FILE      MIMI_SPIFFS_CONFIG_DIR "/nav.json"
 #define MIMI_NAV_WAYPOINTS_FILE   MIMI_SPIFFS_CONFIG_DIR "/waypoints.json"
 #define MIMI_NAV_PLAYBOOK_FILE    MIMI_SPIFFS_CONFIG_DIR "/NAV_PLAYBOOK.md"
+
+/* OTA Security — comma-separated list of allowed hostname suffixes */
+#define MIMI_OTA_MAX_ALLOWED_HOSTS 4
+#ifndef MIMI_OTA_ALLOWED_HOSTS
+#define MIMI_OTA_ALLOWED_HOSTS "github.com,raw.githubusercontent.com"
+#endif

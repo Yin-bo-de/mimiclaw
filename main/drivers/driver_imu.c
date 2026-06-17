@@ -457,11 +457,12 @@ static void imu_update(const imu_config_t *config, int16_t *accel_raw, int16_t *
             s_mag_yaw_lpf = 0.0f; /* will be set on first mag read */
         }
     }
-    s_last_update_us = now_us;
-
-    /* Update latest reading with mutex */
+    /* Update filter state and latest reading under mutex */
     if (s_mutex) {
         xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+        s_last_update_us = now_us;
+
         s_latest_reading.accel_mps2[0] = ax;
         s_latest_reading.accel_mps2[1] = ay;
         s_latest_reading.accel_mps2[2] = az;
@@ -473,6 +474,7 @@ static void imu_update(const imu_config_t *config, int16_t *accel_raw, int16_t *
         s_latest_reading.yaw_deg = s_yaw;
         s_latest_reading.timestamp_us = now_us;
         s_latest_reading.valid = true;
+
         xSemaphoreGive(s_mutex);
     }
 
@@ -702,14 +704,14 @@ void driver_imu_set_yaw(float deg)
     while (deg >= 360.0f) deg -= 360.0f;
     while (deg <    0.0f) deg += 360.0f;
 
-    /* Update integration base so future gyro cycles start from the aligned value */
-    s_yaw = deg;
-
-    /* Immediately publish so consumers don't see a stale value before next imu_update */
+    /* Update integration base and latest reading atomically under mutex */
     if (s_mutex) {
         xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_yaw = deg;
         s_latest_reading.yaw_deg = deg;
         xSemaphoreGive(s_mutex);
+    } else {
+        s_yaw = deg;
     }
 
     ESP_LOGI(TAG, "yaw forced to %.1f°", deg);

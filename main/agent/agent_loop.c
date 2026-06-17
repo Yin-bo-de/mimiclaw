@@ -135,6 +135,25 @@ static char *patch_tool_input_with_context(const llm_tool_call_t *call, const mi
     return patched;
 }
 
+/* Prevent agent loop from being blocked by continuous sensor tests */
+static char *sanitize_test_input_for_agent(const char *input_json)
+{
+    if (!input_json) return NULL;
+    cJSON *root = cJSON_Parse(input_json);
+    if (!root) return NULL;
+
+    cJSON *cont = cJSON_GetObjectItem(root, "continuous");
+    if (cJSON_IsBool(cont) && cJSON_IsTrue(cont)) {
+        cJSON_DeleteItemFromObject(root, "continuous");
+        cJSON_AddBoolToObject(root, "continuous", false);
+        char *out = cJSON_PrintUnformatted(root);
+        cJSON_Delete(root);
+        return out;
+    }
+    cJSON_Delete(root);
+    return NULL;
+}
+
 /* Build the user message with tool_result blocks */
 static cJSON *build_tool_results(const llm_response_t *resp, const mimi_msg_t *msg,
                                  char *tool_output, size_t tool_output_size)
@@ -147,6 +166,23 @@ static cJSON *build_tool_results(const llm_response_t *resp, const mimi_msg_t *m
         char *patched_input = patch_tool_input_with_context(call, msg);
         if (patched_input) {
             tool_input = patched_input;
+        }
+
+        /* Sanitize continuous test inputs to prevent agent loop blocking */
+        char *sanitized = NULL;
+        if (strstr(call->name, "_test")) {
+            sanitized = sanitize_test_input_for_agent(tool_input);
+            if (sanitized) {
+                if (patched_input) {
+                    free(patched_input);
+                    patched_input = sanitized;
+                } else {
+                    free(patched_input);
+                    patched_input = sanitized;
+                }
+                tool_input = sanitized;
+                ESP_LOGI(TAG, "Disabled continuous mode for %s in agent context", call->name);
+            }
         }
 
         /* Execute tool */
