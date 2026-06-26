@@ -293,7 +293,7 @@ MimiClaw 内置 cron 调度器，让 AI 可以自主安排任务。LLM 可以通
 
 MimiClaw 内置了一个轻量的 Web 控制面板，通过浏览器即可与 AI Agent 对话、管理设备文件、上传图片到墨水屏、遥控 GPIO 引脚 — 无需 Telegram 或串口 CLI。
 
-在同一局域网内，用浏览器访问：
+连接esp32的ip后，用浏览器访问：
 
 ```
 http://{ESP32_IP}:18789/ui

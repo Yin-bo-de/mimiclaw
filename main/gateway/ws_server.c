@@ -539,6 +539,7 @@ esp_err_t ws_server_start(void)
     config.server_port = MIMI_WS_PORT;
     config.ctrl_port = MIMI_WS_PORT + 1;
     config.max_open_sockets = MIMI_WS_MAX_CLIENTS;
+    config.stack_size = 8192;
 
     esp_err_t ret = httpd_start(&s_server, &config);
     if (ret != ESP_OK) {
