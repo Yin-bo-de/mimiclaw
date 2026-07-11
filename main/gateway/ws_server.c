@@ -405,6 +405,8 @@ static void handle_display_message(int fd, cJSON *root)
         err = display_service_set_quote(cJSON_GetStringValue(quote), 0);
     } else if (strcmp(act, "refresh") == 0) {
         err = display_service_request_refresh();
+    } else if (strcmp(act, "clear") == 0) {
+        err = display_service_clear();
     } else if (strcmp(act, "show_image") == 0) {
         cJSON *b64_item = cJSON_GetObjectItem(root, "image_b64");
         const char *b64_str = cJSON_GetStringValue(b64_item);

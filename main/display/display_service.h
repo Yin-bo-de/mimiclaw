@@ -101,6 +101,11 @@ esp_err_t display_service_get_state_json(char *output, size_t output_size);
 esp_err_t display_service_show_image_frame(const uint8_t *framebuffer, size_t len);
 
 /**
+ * Clear the e-paper display to all white.
+ */
+esp_err_t display_service_clear(void);
+
+/**
  * Return whether the display driver is currently available.
  */
 bool display_service_is_display_available(void);

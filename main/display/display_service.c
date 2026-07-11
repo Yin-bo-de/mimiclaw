@@ -952,4 +952,26 @@ esp_err_t display_service_show_image_frame(const uint8_t *framebuffer, size_t le
     return err;
 }
 
+esp_err_t display_service_clear(void)
+{
+#if MIMI_DISPLAY_ENABLED
+    if (!display_service_is_display_available()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    static uint8_t white_fb[MIMI_DISPLAY_FB_BYTES];
+    memset(white_fb, 0x55, sizeof(white_fb));
+
+    esp_err_t lock_err = lock_driver();
+    if (lock_err != ESP_OK) {
+        return lock_err;
+    }
+    esp_err_t err = epaper_waveshare_2in9_v2_display_frame(white_fb, sizeof(white_fb));
+    unlock_driver();
+    return err;
+#else
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
 #endif /* MIMI_DISPLAY_SERVICE_WEATHER_PARSE_TEST */
